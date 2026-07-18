@@ -25,7 +25,7 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden|screenLayout|uiMode"
             android:screenOrientation="portrait"
-            android:theme="@style/Theme.StoryTime">
+            android:theme="@style/Theme.StoryTime.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

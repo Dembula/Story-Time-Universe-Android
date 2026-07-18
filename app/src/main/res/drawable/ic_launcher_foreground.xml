@@ -1,17 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Brand ring -->
-    <path
-        android:pathData="M54,30 a24,24 0 1 0 0.001,0 z"
-        android:strokeColor="#FF9320"
-        android:strokeWidth="4"
-        android:fillColor="#00000000" />
-    <!-- Play glyph -->
-    <path
-        android:fillColor="#FFC547"
-        android:pathData="M48,44 L48,64 L66,54 Z" />
-</vector>
+<!-- S.T brand logo, inset to sit inside the adaptive-icon safe zone. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/app_logo"
+    android:insetLeft="14dp"
+    android:insetTop="14dp"
+    android:insetRight="14dp"
+    android:insetBottom="14dp" />

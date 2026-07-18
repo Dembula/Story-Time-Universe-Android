@@ -6,4 +6,12 @@
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <!-- Android 12+ system splash: solid black with the S.T logo, then hands off to the app. -->
+    <style name="Theme.StoryTime.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@android:color/black</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/black</item>
+        <item name="postSplashScreenTheme">@style/Theme.StoryTime</item>
+    </style>
 </resources>

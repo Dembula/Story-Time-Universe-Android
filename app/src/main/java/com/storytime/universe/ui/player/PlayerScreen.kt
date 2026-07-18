@@ -1,14 +1,20 @@
 package com.storytime.universe.ui.player
 
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -38,7 +45,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
@@ -59,8 +65,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private val playerIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+private const val SEEK_STEP_MS = 10_000L
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -71,11 +81,27 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
     }
     val context = LocalContext.current
     val activity = remember { context.findActivity() }
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { maxOf(1, audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)) }
 
     var episodeId by remember { mutableStateOf(request.episodeId) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isBuffering by remember { mutableStateOf(true) }
     var showNextUp by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
+
+    // HUD feedback for brightness / volume / seek gestures
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedbackTick by remember { mutableStateOf(0) }
+
+    var brightness by remember {
+        mutableStateOf(activity?.window?.attributes?.screenBrightness?.takeIf { it in 0f..1f } ?: 0.5f)
+    }
+    var volumeFraction by remember {
+        mutableStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
+    }
+
+    val playerViewRef = remember { mutableStateOf<PlayerView?>(null) }
 
     val queue = request.episodes
     fun currentIndex(): Int = queue.indexOfFirst { it.episodeId == episodeId }
@@ -91,9 +117,54 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
+            .setSeekBackIncrementMs(SEEK_STEP_MS)
+            .setSeekForwardIncrementMs(SEEK_STEP_MS)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DownloadController.cacheDataSourceFactory()))
             .build()
             .apply { playWhenReady = true }
+    }
+
+    fun flashFeedback(text: String) {
+        feedback = text
+        feedbackTick++
+    }
+
+    fun toggleControls() {
+        val pv = playerViewRef.value ?: return
+        if (pv.isControllerFullyVisible) pv.hideController() else pv.showController()
+    }
+
+    fun adjustBrightness(deltaFraction: Float) {
+        val window = activity?.window ?: return
+        val newValue = (brightness + deltaFraction).coerceIn(0.02f, 1f)
+        brightness = newValue
+        val lp = window.attributes
+        lp.screenBrightness = newValue
+        window.attributes = lp
+        flashFeedback("Brightness  ${(newValue * 100).roundToInt()}%")
+    }
+
+    fun adjustVolume(deltaFraction: Float) {
+        val newValue = (volumeFraction + deltaFraction).coerceIn(0f, 1f)
+        volumeFraction = newValue
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newValue * maxVolume).roundToInt(), 0)
+        flashFeedback("Volume  ${(newValue * 100).roundToInt()}%")
+    }
+
+    fun doubleTapAt(x: Float) {
+        val pv = playerViewRef.value ?: return
+        val third = pv.width / 3f
+        when {
+            x < third -> {
+                exoPlayer.seekBack()
+                flashFeedback("- 10s")
+            }
+            x > third * 2 -> {
+                exoPlayer.seekForward()
+                flashFeedback("+ 10s")
+            }
+            else -> if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+        }
     }
 
     // Player state listener
@@ -124,6 +195,12 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
         onDispose {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            // Hand screen brightness back to the system.
+            window?.let {
+                val lp = it.attributes
+                lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                it.attributes = lp
+            }
         }
     }
 
@@ -160,6 +237,14 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
         }
     }
 
+    // Auto-hide the gesture HUD
+    LaunchedEffect(feedbackTick) {
+        if (feedback != null) {
+            delay(750)
+            feedback = null
+        }
+    }
+
     // Periodic progress reporting
     LaunchedEffect(exoPlayer) {
         while (true) {
@@ -192,9 +277,34 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
         }
     }
 
+    val topAlpha by animateFloatAsState(if (controlsVisible) 1f else 0f, label = "topBarAlpha")
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
+                val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean = true
+
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        toggleControls()
+                        return true
+                    }
+
+                    override fun onDoubleTap(e: MotionEvent): Boolean {
+                        doubleTapAt(e.x)
+                        return true
+                    }
+
+                    override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                        val pv = playerViewRef.value ?: return false
+                        if (e1 == null || pv.height == 0) return false
+                        if (abs(distanceY) < abs(distanceX)) return false
+                        val frac = distanceY / pv.height // swipe up => positive => increase
+                        if (e1.x < pv.width / 2f) adjustBrightness(frac) else adjustVolume(frac)
+                        return true
+                    }
+                })
+
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
@@ -202,21 +312,37 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
                     setShowPreviousButton(false)
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setBackgroundColor(android.graphics.Color.BLACK)
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == View.VISIBLE
+                        }
+                    )
+                    @Suppress("ClickableViewAccessibility")
+                    setOnTouchListener { _, event ->
+                        gestureDetector.onTouchEvent(event)
+                        true
+                    }
+                    playerViewRef.value = this
                 }
             },
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Top overlay: back + title
+        // Top overlay: back + title (fades in/out with the transport controls)
         Row(
             Modifier
                 .align(Alignment.TopStart)
-                .padding(16.dp),
+                .padding(16.dp)
+                .alpha(topAlpha),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Box(
-                Modifier.size(42.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).clickable { onClose() },
+                Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable(enabled = controlsVisible) { onClose() },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", tint = Color.White)
@@ -224,7 +350,22 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
             Text(currentTitle, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
 
-        if (isBuffering && errorMessage == null) {
+        // Gesture HUD
+        feedback?.let { text ->
+            Text(
+                text,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            )
+        }
+
+        if (isBuffering && errorMessage == null && feedback == null) {
             CircularProgressIndicator(color = StColors.Accent, modifier = Modifier.align(Alignment.Center))
         }
 
@@ -243,7 +384,6 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.clip(CircleShape).background(Color.White).clickable {
                             errorMessage = null
-                            episodeId = episodeId // retrigger not guaranteed; force via prepare
                             exoPlayer.prepare()
                         }.padding(horizontal = 20.dp, vertical = 10.dp),
                     )

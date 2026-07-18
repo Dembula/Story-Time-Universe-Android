@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash icon: S.T logo centered on the black splash background. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/app_logo"
+    android:insetLeft="26dp"
+    android:insetTop="26dp"
+    android:insetRight="26dp"
+    android:insetBottom="26dp" />
