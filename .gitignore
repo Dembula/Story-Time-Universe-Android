@@ -1,0 +1,20 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Module build outputs
+app/build/
+
+# Kotlin incremental compile cache
+.kotlin/
+
+# JVM crash / replay logs
+hs_err_pid*.log
+replay_pid*.log

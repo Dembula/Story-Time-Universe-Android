@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Story Time Universe</string>
+    <string name="download_channel_name">Downloads</string>
+    <string name="download_notification_title">Story Time downloads</string>
+</resources>
