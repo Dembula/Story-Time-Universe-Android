@@ -84,6 +84,10 @@ class PersistentCookieJar(context: Context) : CookieJar {
         persist()
     }
 
+    @Synchronized
+    fun viewerProfileId(): String? =
+        store.values.firstOrNull { it.name == AppConfig.VIEWER_PROFILE_COOKIE_NAME }?.value
+
     private fun keyFor(cookie: Cookie): String =
         "${cookie.name}|${cookie.domain}|${cookie.path}"
 

@@ -245,7 +245,10 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
         }
     }
 
-    // Periodic progress reporting
+    // Match web/iOS: save resume progress often, and POST /api/watch every ~30s of playback
+    // so creator dashboards count views (WatchSession rows). Track deltas to avoid double-count.
+    var lastReportedWatchSeconds by remember(exoPlayer) { mutableStateOf(0.0) }
+
     LaunchedEffect(exoPlayer) {
         while (true) {
             delay(10_000)
@@ -253,6 +256,11 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
                 val pos = exoPlayer.currentPosition / 1000.0
                 val dur = exoPlayer.duration.takeIf { it > 0 }?.div(1000.0)
                 runCatching { ViewerApi.saveWatchProgress(request.contentId, pos, dur) }
+                val delta = (pos - lastReportedWatchSeconds).coerceAtLeast(0.0)
+                if (delta >= 30.0) {
+                    lastReportedWatchSeconds = pos
+                    runCatching { ViewerApi.recordWatchSession(request.contentId, delta) }
+                }
             }
         }
     }
@@ -265,12 +273,16 @@ fun PlayerScreen(request: PlaybackRequest?, onClose: () -> Unit) {
             val watchedSeconds = (posMs / 1000.0).coerceAtLeast(0.0)
             val contentId = request.contentId
             val trailer = request.isTrailer
+            val previouslyReported = lastReportedWatchSeconds
             exoPlayer.release()
             if (!trailer && watchedSeconds > 0) {
+                val remaining = (watchedSeconds - previouslyReported).coerceAtLeast(0.0)
                 playerIoScope.launch {
                     runCatching {
                         ViewerApi.saveWatchProgress(contentId, watchedSeconds, durMs.takeIf { it > 0 }?.div(1000.0))
-                        ViewerApi.recordWatchSession(contentId, watchedSeconds)
+                        if (remaining >= 5.0) {
+                            ViewerApi.recordWatchSession(contentId, remaining)
+                        }
                     }
                 }
             }

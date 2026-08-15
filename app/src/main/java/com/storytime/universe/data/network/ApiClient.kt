@@ -92,7 +92,13 @@ object ApiClient {
         val builder = Request.Builder()
             .url(url)
             .header("User-Agent", AppConfig.USER_AGENT)
+            .header("X-ST-Platform", "android")
         if (acceptsJson) builder.header("Accept", "application/json")
+
+        // Explicit profile header so watch sessions attribute correctly alongside the cookie.
+        cookieJar.viewerProfileId()?.takeIf { it.isNotEmpty() }?.let {
+            builder.header("X-ST-Viewer-Profile", it)
+        }
 
         val body = when {
             jsonBody != null -> {
