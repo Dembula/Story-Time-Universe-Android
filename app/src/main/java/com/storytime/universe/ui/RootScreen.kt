@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.storytime.universe.ui.auth.SignInScreen
 import com.storytime.universe.ui.main.MainScaffold
 import com.storytime.universe.ui.profiles.ProfilesScreen
 import com.storytime.universe.ui.splash.LaunchSplash
+import com.storytime.universe.ui.subscription.SubscriptionPaywallScreen
 import com.storytime.universe.ui.theme.StColors
 
 @Composable
@@ -30,6 +33,28 @@ fun RootScreen(appState: AppState = viewModel()) {
                 AppState.Route.SIGN_IN -> SignInScreen(appState)
                 AppState.Route.PROFILES -> ProfilesScreen(appState)
                 AppState.Route.MAIN -> MainScaffold(appState)
+            }
+        }
+
+        appState.paywallContext?.let { ctx ->
+            Dialog(
+                onDismissRequest = { appState.dismissPaywall() },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false,
+                ),
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    SubscriptionPaywallScreen(
+                        appState = appState,
+                        context = ctx,
+                        onDismiss = {
+                            appState.dismissPaywall()
+                            appState.refreshSubscription()
+                        },
+                    )
+                }
             }
         }
     }

@@ -14,6 +14,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,6 +35,7 @@ import com.storytime.universe.ui.mylist.MyListScreen
 import com.storytime.universe.ui.player.PlayerScreen
 import com.storytime.universe.ui.search.SearchScreen
 import com.storytime.universe.ui.theme.StColors
+import kotlinx.coroutines.delay
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
@@ -50,6 +52,15 @@ fun MainScaffold(appState: AppState) {
     val nav = rememberNavController()
     val vm: MainViewModel = viewModel()
     val actions = NavActions(nav, vm)
+
+    // After a successful PPV unlock, auto-start the pending playback.
+    LaunchedEffect(appState.paywallContext) {
+        if (appState.paywallContext == null) {
+            delay(350)
+            val resume = appState.consumeResumePlaybackAfterUnlock()
+            if (resume != null) actions.play(resume)
+        }
+    }
 
     val backStackEntry by nav.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -102,6 +113,7 @@ fun MainScaffold(appState: AppState) {
                     contentId = id,
                     seed = vm.seeds[id],
                     actions = actions,
+                    appState = appState,
                     onBack = { nav.popBackStack() },
                 )
             }

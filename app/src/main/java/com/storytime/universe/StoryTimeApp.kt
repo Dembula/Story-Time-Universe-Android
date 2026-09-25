@@ -5,6 +5,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.storytime.universe.data.billing.BillingService
 import com.storytime.universe.data.download.DownloadController
 import com.storytime.universe.data.network.ApiClient
 
@@ -13,6 +14,7 @@ class StoryTimeApp : Application(), ImageLoaderFactory {
         super.onCreate()
         ApiClient.init(this)
         DownloadController.init(this)
+        BillingService.init(this)
     }
 
     /** Coil loads images through the same authenticated OkHttp client so session-protected

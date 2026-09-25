@@ -68,7 +68,13 @@ import com.storytime.universe.ui.theme.StColors
 import kotlinx.coroutines.launch
 
 @Composable
-fun ContentDetailScreen(contentId: String, seed: ContentItem?, actions: NavActions, onBack: () -> Unit) {
+fun ContentDetailScreen(
+    contentId: String,
+    seed: ContentItem?,
+    actions: NavActions,
+    appState: com.storytime.universe.ui.AppState,
+    onBack: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<ContentDetail?>(null) }
     var crew by remember { mutableStateOf<List<CrewCredit>>(emptyList()) }
@@ -76,6 +82,7 @@ fun ContentDetailScreen(contentId: String, seed: ContentItem?, actions: NavActio
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var inWatchlist by remember { mutableStateOf(false) }
     var watchlistBusy by remember { mutableStateOf(false) }
+    var playBusy by remember { mutableStateOf(false) }
 
     LaunchedEffect(contentId) {
         try {
@@ -100,17 +107,38 @@ fun ContentDetailScreen(contentId: String, seed: ContentItem?, actions: NavActio
 
     val episodeInfos = remember(detail) { buildEpisodeInfos(detail) }
     val firstEpisodeId = detail?.seasons?.firstOrNull()?.episodes?.firstOrNull()?.id
+    val isPpv = appState.isPayPerViewAccount
+    val playLabel = if (isPpv) "Pay" else "Play"
 
     fun play(trailer: Boolean, episodeId: String?) {
-        actions.play(
-            PlaybackRequest(
-                contentId = contentId,
-                title = title,
-                episodeId = episodeId,
-                isTrailer = trailer,
-                episodes = if (trailer) emptyList() else episodeInfos,
-            )
+        val request = PlaybackRequest(
+            contentId = contentId,
+            title = title,
+            episodeId = episodeId,
+            isTrailer = trailer,
+            episodes = if (trailer) emptyList() else episodeInfos,
         )
+        if (trailer || !isPpv) {
+            actions.play(request)
+            return
+        }
+        playBusy = true
+        errorMessage = null
+        scope.launch {
+            try {
+                when (val access = appState.resolvePlayAccess(request)) {
+                    is com.storytime.universe.data.model.TitleAccessResult.Playable -> actions.play(request)
+                    is com.storytime.universe.data.model.TitleAccessResult.RequiresPurchase -> {
+                        appState.presentPpvUnlock(contentId, title, resume = request)
+                    }
+                    is com.storytime.universe.data.model.TitleAccessResult.Blocked -> {
+                        errorMessage = access.message
+                    }
+                }
+            } finally {
+                playBusy = false
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(StColors.Background)) {
@@ -146,12 +174,16 @@ fun ContentDetailScreen(contentId: String, seed: ContentItem?, actions: NavActio
                     // Action row
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            Modifier.weight(1f).clip(CircleShape).background(Color.White).clickable { play(false, firstEpisodeId) }.padding(vertical = 14.dp),
+                            Modifier.weight(1f).clip(CircleShape).background(Color.White).clickable(enabled = !playBusy) { play(false, firstEpisodeId) }.padding(vertical = 14.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Icon(Icons.Filled.PlayArrow, null, tint = Color.Black)
-                                Text("Play", color = Color.Black, fontWeight = FontWeight.Bold)
+                                if (playBusy) {
+                                    CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Filled.PlayArrow, null, tint = Color.Black)
+                                    Text(playLabel, color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                         if (detail?.hasTrailer == true) {

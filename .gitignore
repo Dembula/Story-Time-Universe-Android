@@ -18,3 +18,8 @@ app/build/
 # JVM crash / replay logs
 hs_err_pid*.log
 replay_pid*.log
+
+# Local release outputs
+app/release/
+*.aab
+*.apk

@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import com.storytime.universe.data.model.CatalogueTypes
 import com.storytime.universe.data.model.ContentItem
 import com.storytime.universe.data.model.ContinueWatchingItem
 import com.storytime.universe.data.model.HomeCatalogRow
+import com.storytime.universe.data.model.TitleAccessResult
 import com.storytime.universe.data.network.ViewerApi
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.main.NavActions
@@ -41,9 +43,11 @@ import com.storytime.universe.ui.theme.StColors
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(appState: AppState, actions: NavActions) {
+    val scope = rememberCoroutineScope()
     var featured by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var continueWatching by remember { mutableStateOf<List<ContinueWatchingItem>>(emptyList()) }
     var trending by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
@@ -73,6 +77,21 @@ fun HomeScreen(appState: AppState, actions: NavActions) {
             errorMessage = "Could not load the catalogue. Pull to refresh."
         }
         isLoading = false
+    }
+
+    fun requestPlay(contentId: String, title: String) {
+        val request = PlaybackRequest(contentId, title)
+        if (!appState.isPayPerViewAccount) {
+            actions.play(request)
+            return
+        }
+        scope.launch {
+            when (val access = appState.resolvePlayAccess(request)) {
+                TitleAccessResult.Playable -> actions.play(request)
+                is TitleAccessResult.RequiresPurchase -> appState.presentPpvUnlock(contentId, title, resume = request)
+                is TitleAccessResult.Blocked -> { /* Home has no error banner — open detail */ actions.openDetailById(contentId) }
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(StColors.Background)) {
@@ -115,7 +134,7 @@ fun HomeScreen(appState: AppState, actions: NavActions) {
                     item {
                         HeroCarousel(
                             items = featured,
-                            onPlay = { actions.play(PlaybackRequest(it.id, it.title)) },
+                            onPlay = { requestPlay(it.id, it.title) },
                             onOpen = { actions.openDetail(it) },
                         )
                     }
@@ -123,7 +142,7 @@ fun HomeScreen(appState: AppState, actions: NavActions) {
                 if (continueWatching.isNotEmpty()) {
                     item {
                         ContinueWatchingRow(continueWatching) { item ->
-                            actions.play(PlaybackRequest(item.id, item.title))
+                            requestPlay(item.id, item.title)
                         }
                     }
                 }

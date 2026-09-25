@@ -14,7 +14,12 @@ object AppConfig {
     const val CHANGE_PLAN_URL = "$WEB_BASE_URL/browse/account/change-plan"
     const val PACKAGE_ONBOARDING_URL = "$WEB_BASE_URL/onboarding/package"
     const val SIGN_UP_URL = "$WEB_BASE_URL/auth/signup"
-    const val VIEWER_SIGN_UP_URL = "$WEB_BASE_URL/auth/signup"
+    /** Marks Android app so web can adapt after payment (same pattern as iOS). */
+    const val VIEWER_SIGN_UP_URL =
+        "$WEB_BASE_URL/auth/signup?source=android_app&platform=android&callback=/profiles"
+    const val FORGOT_PASSWORD_URL = "$WEB_BASE_URL/auth/forgot-password"
+    const val TERMS_URL = "$WEB_BASE_URL/legal/terms"
+    const val PRIVACY_URL = "$WEB_BASE_URL/legal/privacy"
 
     const val VIEWER_PROFILE_COOKIE_NAME = "st_viewer_profile"
     const val VIEWER_PROFILE_UNLOCK_COOKIE_NAME = "st_viewer_profile_unlock"

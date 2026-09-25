@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +23,7 @@ import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storytime.universe.data.AppConfig
+import com.storytime.universe.data.billing.PaywallContext
+import com.storytime.universe.data.billing.StoreProducts
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.theme.StColors
 import com.storytime.universe.ui.util.openUrl
@@ -47,6 +49,7 @@ fun AccountScreen(appState: AppState) {
     val profile = appState.activeProfile
     val user = appState.session?.user
     val sub = appState.subscription
+    val planLabel = StoreProducts.displayNameForPlanCode(sub?.plan)
 
     Column(
         Modifier.fillMaxSize().background(StColors.Background).verticalScroll(rememberScrollState()),
@@ -54,7 +57,6 @@ fun AccountScreen(appState: AppState) {
     ) {
         Text("Account", color = StColors.Foreground, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 20.dp))
 
-        // Profile header
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -73,7 +75,6 @@ fun AccountScreen(appState: AppState) {
             }
         }
 
-        // Subscription card
         Column(
             Modifier
                 .fillMaxWidth()
@@ -85,42 +86,95 @@ fun AccountScreen(appState: AppState) {
         ) {
             Text("Subscription", color = StColors.Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(sub?.plan?.replaceFirstChar { it.uppercase() } ?: "No active plan", color = StColors.Foreground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(planLabel, color = StColors.Foreground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                val status = sub?.status?.uppercase() ?: "—"
+                val status = sub?.status?.uppercase() ?: "NONE"
                 val statusColor = when (status) {
-                    "ACTIVE", "TRIALING" -> StColors.Accent
-                    "PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED" -> Color(0xFFE5484D)
+                    "ACTIVE", "TRIALING", "PAID" -> StColors.Accent
+                    "PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "NONE" -> Color(0xFFE5484D)
                     else -> StColors.Muted
                 }
-                Text(status.replace("_", " "), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clip(CircleShape).background(statusColor.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 5.dp))
+                Text(
+                    status.replace("_", " "),
+                    color = statusColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(statusColor.copy(alpha = 0.15f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+            when {
+                appState.isPayPerViewAccount -> {
+                    Text(
+                        "${StoreProducts.formatZar(StoreProducts.PPV_PRICE_ZAR)} per title · ${StoreProducts.PPV_ACCESS_DAYS}-day unlock · 1 profile",
+                        color = StColors.Muted,
+                        fontSize = 12.sp,
+                    )
+                }
+                else -> when (sub?.plan?.uppercase()) {
+                    "BASE_1", "BASE", "BASIC" -> Text("R29.99 / month · 1 profile", color = StColors.Muted, fontSize = 12.sp)
+                    "STANDARD_3", "STANDARD" -> Text("R89.99 / month · 3 profiles", color = StColors.Muted, fontSize = 12.sp)
+                    "FAMILY_5", "FAMILY", "PREMIUM" -> Text("R119.99 / month · 5 profiles", color = StColors.Muted, fontSize = 12.sp)
+                }
             }
             sub?.currentPeriodEnd?.let { Text("Renews / ends: $it", color = StColors.Muted, fontSize = 12.sp) }
             sub?.profileLimit?.let { Text("Profiles allowed: $it", color = StColors.Muted, fontSize = 12.sp) }
+            sub?.deviceCount?.let { Text("Devices: $it", color = StColors.Muted, fontSize = 12.sp) }
 
             if (appState.needsPaymentAttention) {
-                ActionButton("Renew subscription", Icons.Filled.CreditCard, accent = true) { openUrl(context, AppConfig.RENEW_SUBSCRIPTION_URL) }
+                ActionButton("Choose a package", Icons.Filled.CreditCard, accent = true) {
+                    appState.presentPaywall(PaywallContext.Subscribe)
+                }
+            } else if (appState.isPayPerViewAccount) {
+                ActionButton("PPV account · change package", Icons.Filled.CreditCard) {
+                    appState.presentPaywall(PaywallContext.ChangePlan)
+                }
             } else {
-                ActionButton("Manage subscription", Icons.Filled.CreditCard) { openUrl(context, AppConfig.ACCOUNT_URL) }
+                ActionButton("Manage subscription", Icons.Filled.CreditCard) {
+                    openUrl(context, AppConfig.ACCOUNT_URL)
+                }
             }
-            ActionButton("Change plan", Icons.AutoMirrored.Filled.OpenInNew) { openUrl(context, AppConfig.CHANGE_PLAN_URL) }
+            ActionButton("Change plan", Icons.Filled.WorkspacePremium) {
+                appState.presentPaywall(PaywallContext.ChangePlan)
+            }
+            ActionButton("Open account on web", Icons.AutoMirrored.Filled.OpenInNew) {
+                openUrl(context, AppConfig.ACCOUNT_URL)
+            }
         }
 
-        // Actions
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             ActionButton("Switch profile", Icons.Filled.SwapHoriz) { appState.switchProfile() }
-            ActionButton("Privacy Policy", Icons.Filled.PrivacyTip) { openUrl(context, "${AppConfig.WEB_BASE_URL}/privacy") }
-            ActionButton("Terms of Service", Icons.Filled.Description) { openUrl(context, "${AppConfig.WEB_BASE_URL}/terms") }
-            ActionButton("Help & Support", Icons.Filled.HelpOutline) { openUrl(context, "${AppConfig.WEB_BASE_URL}/support") }
+            ActionButton("Privacy Policy", Icons.Filled.PrivacyTip) {
+                openUrl(context, "${AppConfig.WEB_BASE_URL}/legal/privacy")
+            }
+            ActionButton("Terms of Service", Icons.Filled.Description) {
+                openUrl(context, "${AppConfig.WEB_BASE_URL}/legal/terms")
+            }
+            ActionButton("Help & Support", Icons.Filled.HelpOutline) {
+                openUrl(context, "${AppConfig.WEB_BASE_URL}/support")
+            }
             ActionButton("Sign out", Icons.AutoMirrored.Filled.Logout, destructive = true) { appState.signOut() }
         }
 
-        Text("Story Time Universe · v1.0", color = StColors.Muted.copy(alpha = 0.6f), fontSize = 12.sp, modifier = Modifier.padding(start = 20.dp, bottom = 32.dp))
+        Text(
+            "Story Time Universe · v1.0",
+            color = StColors.Muted.copy(alpha = 0.6f),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 20.dp, bottom = 32.dp),
+        )
     }
 }
 
 @Composable
-private fun ActionButton(label: String, icon: ImageVector, accent: Boolean = false, destructive: Boolean = false, onClick: () -> Unit) {
+private fun ActionButton(
+    label: String,
+    icon: ImageVector,
+    accent: Boolean = false,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
     val tint = when {
         destructive -> Color(0xFFE5484D)
         accent -> StColors.Accent

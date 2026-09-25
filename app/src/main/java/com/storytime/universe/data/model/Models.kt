@@ -321,7 +321,42 @@ data class ViewerSubscription(
     @Serializable(with = FlexibleIntSerializer::class) val deviceCount: Int? = null,
     val currentPeriodEnd: String? = null,
     val cancelAtPeriodEnd: Boolean? = null,
+) {
+    /** True when account was set up as pay-per-title (not unlimited subscription). */
+    val isPayPerViewModel: Boolean
+        get() {
+            val model = viewerModel?.trim()?.uppercase().orEmpty()
+            val p = plan?.trim()?.uppercase().orEmpty()
+            return looksLikePayPerView(model) || looksLikePayPerView(p)
+        }
+
+    companion object {
+        private fun looksLikePayPerView(value: String): Boolean {
+            if (value.isEmpty()) return false
+            if (value == "PPV" || value == "PPV_FILM" || value == "PAY_PER_VIEW") return true
+            if (value.contains("PPV")) return true
+            if (value.contains("PAY_PER_VIEW") || value.contains("PAY-PER-VIEW") || value.contains("PAY PER VIEW")) return true
+            return false
+        }
+    }
+}
+
+/** Result of `POST /api/viewer/ppv`. */
+@Serializable
+data class PpvCheckoutResponse(
+    val success: Boolean? = null,
+    val requiresPayment: Boolean? = null,
+    val alreadyOwned: Boolean? = null,
+    val checkoutUrl: String? = null,
+    val error: String? = null,
 )
+
+/** Gate Play for PPV accounts before opening the player. */
+sealed class TitleAccessResult {
+    data object Playable : TitleAccessResult()
+    data class RequiresPurchase(val contentId: String) : TitleAccessResult()
+    data class Blocked(val message: String) : TitleAccessResult()
+}
 
 @Serializable
 data class SubscriptionResponse(val subscription: ViewerSubscription? = null)

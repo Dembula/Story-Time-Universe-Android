@@ -10,6 +10,8 @@ import com.storytime.universe.data.model.PersonRoute
 import com.storytime.universe.data.model.PlaybackBundle
 import com.storytime.universe.data.model.SearchResponse
 import com.storytime.universe.data.model.SearchResult
+import com.storytime.universe.data.model.PpvCheckoutResponse
+import com.storytime.universe.data.model.TitleAccessResult
 import com.storytime.universe.data.model.SubscriptionResponse
 import com.storytime.universe.data.model.ViewerProfile
 import com.storytime.universe.data.model.ViewerSubscription
@@ -277,5 +279,155 @@ object ViewerApi {
         val result = api.request(path = "api/viewer/subscription")
         if (result.code != 200) return null
         return api.decode<SubscriptionResponse>(result).subscription
+    }
+
+    /**
+     * Select account package model (Subscription plan or PPV).
+     * PPV activates immediately with no checkout; subscription may require payment.
+     */
+    suspend fun selectViewerPackage(
+        viewerModel: String,
+        plan: String,
+        startTrial: Boolean = false,
+    ): ViewerSubscription? {
+        val body = mapOf(
+            "viewerModel" to viewerModel,
+            "plan" to plan,
+            "startTrial" to startTrial,
+        )
+        val result = api.request(path = "api/viewer/subscription", method = "POST", jsonBody = body)
+        if (!result.isSuccess) throw api.parseApiError(result)
+        // Response may wrap subscription or return it directly — prefer nested then refresh.
+        val nested = runCatching { api.decode<SubscriptionResponse>(result).subscription }.getOrNull()
+        if (nested != null) return nested
+        return fetchSubscription()
+    }
+
+    suspend fun requestPpvAccess(contentId: String): PpvCheckoutResponse {
+        val result = api.request(
+            path = "api/viewer/ppv",
+            method = "POST",
+            jsonBody = mapOf("contentId" to contentId),
+        )
+        if (!result.isSuccess) throw api.parseApiError(result)
+        return api.decode(result)
+    }
+
+    /** Gate Play for PPV accounts before opening the player (iOS parity). */
+    suspend fun resolveTitleAccess(
+        contentId: String,
+        isPayPerViewAccount: Boolean,
+        isTrailer: Boolean,
+    ): TitleAccessResult {
+        if (isTrailer) return TitleAccessResult.Playable
+        if (!isPayPerViewAccount) return TitleAccessResult.Playable
+        return try {
+            val result = requestPpvAccess(contentId)
+            when {
+                result.alreadyOwned == true -> TitleAccessResult.Playable
+                result.requiresPayment == true ||
+                    !result.checkoutUrl.isNullOrEmpty() ||
+                    result.success == false -> TitleAccessResult.RequiresPurchase(contentId)
+                else -> TitleAccessResult.Playable
+            }
+        } catch (e: ApiException.PaymentRequired) {
+            TitleAccessResult.RequiresPurchase(contentId)
+        } catch (e: Exception) {
+            TitleAccessResult.Blocked(e.localizedMessage ?: "Could not verify title access.")
+        }
+    }
+
+    /**
+     * Attach a verified Google Play subscription purchase to the signed-in viewer.
+     * Tries known production endpoints (same pattern as iOS Apple activate).
+     */
+    suspend fun activateGoogleSubscription(
+        productId: String,
+        purchaseToken: String,
+        orderId: String?,
+        packageName: String,
+        planCode: String,
+    ) {
+        val body = mapOf(
+            "productId" to productId,
+            "purchaseToken" to purchaseToken,
+            "orderId" to orderId,
+            "packageName" to packageName,
+            "plan" to planCode,
+            "planCode" to planCode,
+            "platform" to "android",
+            "source" to "android_app",
+        )
+        postGoogleActivate(
+            candidates = listOf(
+                "api/viewer/google/activate",
+                "api/viewer/google/subscription",
+                "api/viewer/play/activate",
+                "api/viewer/play/subscription",
+                "api/viewer/iap/subscription",
+                "api/billing/google/activate",
+                "api/payments/google/activate",
+            ),
+            body = body,
+        )
+    }
+
+    /** Attach a verified Google Play PPV unlock to a content id. */
+    suspend fun activateGooglePpv(
+        contentId: String,
+        productId: String,
+        purchaseToken: String,
+        orderId: String?,
+        packageName: String,
+    ) {
+        val body = mapOf(
+            "contentId" to contentId,
+            "productId" to productId,
+            "purchaseToken" to purchaseToken,
+            "orderId" to orderId,
+            "packageName" to packageName,
+            "plan" to "PPV_FILM",
+            "planCode" to "PPV_FILM",
+            "platform" to "android",
+            "source" to "android_app",
+            "kind" to "ppv",
+            "accessDays" to 7,
+        )
+        postGoogleActivate(
+            candidates = listOf(
+                "api/viewer/google/ppv",
+                "api/viewer/play/ppv",
+                "api/viewer/iap/ppv",
+                "api/billing/google/ppv",
+                "api/payments/google/ppv",
+                "api/viewer/google/activate",
+            ),
+            body = body,
+            notFoundMessage = "Purchase completed in Google Play, but the server cannot unlock titles from Android yet. " +
+                "Open the title on story-time.online to finish PayFast unlock, or contact support with your Play order ID.",
+        )
+    }
+
+    private suspend fun postGoogleActivate(
+        candidates: List<String>,
+        body: Map<String, Any?>,
+        notFoundMessage: String = "Purchase completed in Google Play, but the server cannot activate plans from Android yet. " +
+            "Contact support with your Play order ID, or open Manage subscription on the website.",
+    ) {
+        var lastError: Exception = ApiException.Server(notFoundMessage)
+        var sawNotFound = true
+        for (path in candidates) {
+            val result = runCatching { api.request(path = path, method = "POST", jsonBody = body) }.getOrElse {
+                lastError = if (it is Exception) it else Exception(it)
+                continue
+            }
+            if (result.isSuccess) return
+            if (result.code == 404) continue
+            sawNotFound = false
+            lastError = api.parseApiError(result)
+            if (result.code in listOf(401, 402, 403)) throw lastError
+        }
+        if (sawNotFound) throw ApiException.Server(notFoundMessage)
+        throw lastError
     }
 }

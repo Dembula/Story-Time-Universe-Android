@@ -87,5 +87,8 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
+    // Google Play Billing — subscription plans (Basic / Standard / Premium)
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

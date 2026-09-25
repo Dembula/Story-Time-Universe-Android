@@ -45,7 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storytime.universe.R
-import com.storytime.universe.data.AppConfig
+import com.storytime.universe.data.billing.PaywallContext
 import com.storytime.universe.data.model.ContentItem
 import com.storytime.universe.data.model.ViewerProfile
 import com.storytime.universe.data.network.ApiException
@@ -53,14 +53,11 @@ import com.storytime.universe.data.network.ViewerApi
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.components.RemoteImage
 import com.storytime.universe.ui.theme.StColors
-import com.storytime.universe.ui.util.openUrl
-import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
 fun ProfilesScreen(appState: AppState) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var profiles by remember { mutableStateOf<List<ViewerProfile>>(emptyList()) }
@@ -112,7 +109,10 @@ fun ProfilesScreen(appState: AppState) {
                 appState.selectProfile(active)
             } catch (e: Exception) {
                 errorMessage = e.localizedMessage
-                if (e is ApiException.PaymentRequired) pinProfile = null
+                if (e is ApiException.PaymentRequired) {
+                    pinProfile = null
+                    appState.presentPaywall(PaywallContext.Reactivate)
+                }
             } finally {
                 selectingId = null
             }
@@ -224,7 +224,10 @@ fun ProfilesScreen(appState: AppState) {
                 }
 
                 if (appState.needsPaymentAttention) {
-                    PaymentBanner(onRenew = { openUrl(context, AppConfig.RENEW_SUBSCRIPTION_URL) })
+                    PaymentBanner(
+                        onSubscribe = { appState.presentPaywall(PaywallContext.Reactivate) },
+                        onChangePlan = { appState.presentPaywall(PaywallContext.ChangePlan) },
+                    )
                 }
             }
         }
@@ -313,7 +316,7 @@ private fun AddProfileButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun PaymentBanner(onRenew: () -> Unit) {
+private fun PaymentBanner(onSubscribe: () -> Unit, onChangePlan: () -> Unit) {
     Column(
         Modifier
             .padding(horizontal = 20.dp)
@@ -323,18 +326,31 @@ private fun PaymentBanner(onRenew: () -> Unit) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Subscription needs attention", color = StColors.Foreground, fontWeight = FontWeight.Bold)
-        Text("Renew or pay on the website — payments are not taken in the app.", color = StColors.Muted, fontSize = 13.sp)
+        Text("Subscription payment required", color = StColors.Foreground, fontWeight = FontWeight.Bold)
+        Text(
+            "Subscribe or reactivate to enter the catalogue. Choose Basic (R29.99), Standard (R89.99), Premium (R119.99), or Pay Per View (R49.99 per title · 7 days).",
+            color = StColors.Muted,
+            fontSize = 13.sp,
+        )
         Box(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(StColors.Accent)
-                .clickable { onRenew() }
+                .clickable { onSubscribe() }
                 .padding(vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Renew on Web", color = Color.Black, fontWeight = FontWeight.SemiBold)
+            Text("Choose a plan", color = Color.Black, fontWeight = FontWeight.SemiBold)
         }
+        Text(
+            "Switch plan",
+            color = StColors.AccentGold,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .clickable { onChangePlan() },
+        )
     }
 }

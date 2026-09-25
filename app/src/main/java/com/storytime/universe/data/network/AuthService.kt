@@ -72,6 +72,19 @@ object AuthService {
         return session
     }
 
+    /** Creates a viewer account via production `POST /api/auth/signup`, then signs in. */
+    suspend fun signUp(email: String, password: String, name: String?): AuthSession {
+        val body = HashMap<String, Any?>()
+        body["email"] = email.trim().lowercase()
+        body["password"] = password
+        val trimmedName = name?.trim().orEmpty()
+        if (trimmedName.isNotEmpty()) body["name"] = trimmedName
+
+        val result = api.request(path = "api/auth/signup", method = "POST", jsonBody = body)
+        if (!result.isSuccess) throw api.parseApiError(result)
+        return signIn(email, password)
+    }
+
     suspend fun signOut() {
         val csrfResult = runCatching { api.request(path = "api/auth/csrf") }.getOrNull()
         val csrf = csrfResult?.let { runCatching { api.decode<CsrfResponse>(it) }.getOrNull() }
