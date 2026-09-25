@@ -107,12 +107,12 @@ object BillingService : PurchasesUpdatedListener {
                 .build()
         }
         val subParams = QueryProductDetailsParams.newBuilder().setProductList(subList).build()
-        val subs = suspendCancellableCoroutine { cont ->
-            client.queryProductDetailsAsync(subParams) { billingResult, detailsResult ->
+        val subs = suspendCancellableCoroutine<List<ProductDetails>> { cont ->
+            client.queryProductDetailsAsync(subParams) { billingResult, productDetailsList ->
                 if (cont.isActive) {
                     cont.resume(
                         if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                            detailsResult.productDetailsList
+                            productDetailsList.orEmpty()
                         } else {
                             emptyList()
                         }
@@ -130,12 +130,12 @@ object BillingService : PurchasesUpdatedListener {
                 .build()
         )
         val ppvParams = QueryProductDetailsParams.newBuilder().setProductList(ppvList).build()
-        val ppv = suspendCancellableCoroutine { cont ->
-            client.queryProductDetailsAsync(ppvParams) { billingResult, detailsResult ->
+        val ppv = suspendCancellableCoroutine<ProductDetails?> { cont ->
+            client.queryProductDetailsAsync(ppvParams) { billingResult, productDetailsList ->
                 if (cont.isActive) {
                     cont.resume(
                         if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                            detailsResult.productDetailsList.firstOrNull()
+                            productDetailsList.orEmpty().firstOrNull()
                         } else {
                             null
                         }

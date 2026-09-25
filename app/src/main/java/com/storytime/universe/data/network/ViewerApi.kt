@@ -417,8 +417,10 @@ object ViewerApi {
         var lastError: Exception = ApiException.Server(notFoundMessage)
         var sawNotFound = true
         for (path in candidates) {
-            val result = runCatching { api.request(path = path, method = "POST", jsonBody = body) }.getOrElse {
-                lastError = if (it is Exception) it else Exception(it)
+            val result = try {
+                api.request(path = path, method = "POST", jsonBody = body)
+            } catch (e: Exception) {
+                lastError = e
                 continue
             }
             if (result.isSuccess) return
