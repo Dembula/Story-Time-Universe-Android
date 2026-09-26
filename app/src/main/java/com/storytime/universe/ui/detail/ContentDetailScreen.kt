@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,8 +59,10 @@ import com.storytime.universe.data.model.Episode
 import com.storytime.universe.data.model.PersonRoute
 import com.storytime.universe.data.model.Season
 import com.storytime.universe.data.network.ViewerApi
+import com.storytime.universe.data.parental.ParentalControls
 import com.storytime.universe.ui.components.DownloadButton
 import com.storytime.universe.ui.components.DownloadButtonStyle
+import com.storytime.universe.ui.components.ParentalPinDialog
 import com.storytime.universe.ui.components.RemoteImage
 import com.storytime.universe.ui.home.PosterCard
 import com.storytime.universe.ui.main.NavActions
@@ -75,7 +78,9 @@ fun ContentDetailScreen(
     appState: com.storytime.universe.ui.AppState,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val parental = remember { ParentalControls.get(context) }
     var detail by remember { mutableStateOf<ContentDetail?>(null) }
     var crew by remember { mutableStateOf<List<CrewCredit>>(emptyList()) }
     var related by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
@@ -83,6 +88,7 @@ fun ContentDetailScreen(
     var inWatchlist by remember { mutableStateOf(false) }
     var watchlistBusy by remember { mutableStateOf(false) }
     var playBusy by remember { mutableStateOf(false) }
+    var pendingPlay by remember { mutableStateOf<PlaybackRequest?>(null) }
 
     LaunchedEffect(contentId) {
         try {
@@ -110,15 +116,8 @@ fun ContentDetailScreen(
     val isPpv = appState.isPayPerViewAccount
     val playLabel = if (isPpv) "Pay" else "Play"
 
-    fun play(trailer: Boolean, episodeId: String?) {
-        val request = PlaybackRequest(
-            contentId = contentId,
-            title = title,
-            episodeId = episodeId,
-            isTrailer = trailer,
-            episodes = if (trailer) emptyList() else episodeInfos,
-        )
-        if (trailer || !isPpv) {
+    fun launchPlay(request: PlaybackRequest) {
+        if (request.isTrailer || !isPpv) {
             actions.play(request)
             return
         }
@@ -141,6 +140,21 @@ fun ContentDetailScreen(
         }
     }
 
+    fun play(trailer: Boolean, episodeId: String?) {
+        val request = PlaybackRequest(
+            contentId = contentId,
+            title = title,
+            episodeId = episodeId,
+            isTrailer = trailer,
+            episodes = if (trailer) emptyList() else episodeInfos,
+        )
+        if (!trailer && parental.needsPinForPlayer()) {
+            pendingPlay = request
+            return
+        }
+        launchPlay(request)
+    }
+
     Box(Modifier.fillMaxSize().background(StColors.Background)) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             // Hero
@@ -161,6 +175,15 @@ fun ContentDetailScreen(
                     val meta = buildMeta(detail, seed)
                     if (meta.isNotEmpty()) {
                         Text(meta, color = StColors.Muted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    val episodeCount = episodeInfos.size
+                    if (episodeCount > 0) {
+                        Text(
+                            "$episodeCount episode${if (episodeCount == 1) "" else "s"}",
+                            color = StColors.Accent,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                        )
                     }
                     detail?.ratingStats?.let { rating ->
                         if ((rating.count ?: 0) > 0) {
@@ -233,9 +256,15 @@ fun ContentDetailScreen(
                     TrailersSection(detail?.backdropCandidates ?: detail?.posterCandidates ?: emptyList()) { play(true, null) }
                 }
 
-                val seasons = detail?.seasons ?: emptyList()
+                val seasons = detail?.seasons?.filter { !(it.episodes.isNullOrEmpty()) } ?: emptyList()
                 if (seasons.isNotEmpty()) {
                     EpisodesSection(seasons, title, contentId, detail?.type) { play(false, it) }
+                } else if (detail != null && isSeriesType(detail?.type ?: seed?.type)) {
+                    Text(
+                        "Episode list isn't available for this title yet. Make sure the latest server update is deployed, then reopen this page.",
+                        color = StColors.Muted,
+                        fontSize = 13.sp,
+                    )
                 }
 
                 if (crew.isNotEmpty()) CastSection(crew) { actions.openPerson(it) }
@@ -260,6 +289,19 @@ fun ContentDetailScreen(
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+        }
+
+        pendingPlay?.let {
+            ParentalPinDialog(
+                title = "Play title",
+                message = "Enter your parental PIN to play.",
+                onDismiss = { pendingPlay = null },
+                onSuccess = {
+                    val req = pendingPlay
+                    pendingPlay = null
+                    if (req != null) launchPlay(req)
+                },
+            )
         }
     }
 }
@@ -317,31 +359,141 @@ private fun TrailersSection(imageUrls: List<String>, onPlay: () -> Unit) {
 }
 
 @Composable
-private fun EpisodesSection(seasons: List<Season>, seriesTitle: String, seriesContentId: String, contentType: String?, onPlayEpisode: (String) -> Unit) {
+private fun EpisodesSection(
+    seasons: List<Season>,
+    seriesTitle: String,
+    seriesContentId: String,
+    contentType: String?,
+    onPlayEpisode: (String) -> Unit,
+) {
+    var selectedSeasonId by remember(seasons) {
+        mutableStateOf(seasons.firstOrNull()?.stableId.orEmpty())
+    }
+    val selectedSeason = seasons.firstOrNull { it.stableId == selectedSeasonId } ?: seasons.first()
+    val episodes = selectedSeason.episodes.orEmpty()
+    val totalEpisodes = seasons.sumOf { it.episodes?.size ?: 0 }
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        SectionTitle("Episodes")
-        seasons.forEach { season ->
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Season ${season.seasonNumber ?: 1}", color = StColors.AccentGold, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                (season.episodes ?: emptyList()).forEach { episode ->
-                    EpisodeRow(
-                        episode = episode,
-                        spec = DownloadSpec(
-                            contentId = seriesContentId,
-                            episodeId = episode.id,
-                            title = seriesTitle,
-                            subtitle = "S${season.seasonNumber ?: 1} E${episode.episodeNumber ?: 0} · ${episode.title ?: "Episode"}",
-                            posterUrl = episode.thumbnailUrl,
-                            type = contentType,
-                            durationSeconds = episode.duration,
-                            seasonNumber = season.seasonNumber,
-                            episodeNumber = episode.episodeNumber,
-                        ),
-                        onPlay = { onPlayEpisode(episode.id) },
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle("Episodes")
+            Spacer(Modifier.weight(1f))
+            Text(
+                "$totalEpisodes episode${if (totalEpisodes == 1) "" else "s"} · ${seasons.size} season${if (seasons.size == 1) "" else "s"}",
+                color = StColors.Muted,
+                fontSize = 12.sp,
+            )
+        }
+
+        if (seasons.size > 1) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(seasons, key = { it.stableId }) { season ->
+                    val selected = season.stableId == selectedSeason.stableId
+                    Text(
+                        "Season ${season.seasonNumber ?: 1}",
+                        color = if (selected) Color.Black else Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (selected) Color.White else Color.White.copy(alpha = 0.12f))
+                            .clickable { selectedSeasonId = season.stableId }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                     )
                 }
             }
+        } else {
+            Text(
+                "Season ${selectedSeason.seasonNumber ?: 1}",
+                color = StColors.AccentGold,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+            )
         }
+
+        Text(
+            "${episodes.size} episode${if (episodes.size == 1) "" else "s"} in this season",
+            color = StColors.Muted,
+            fontSize = 12.sp,
+        )
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(episodes, key = { it.id }) { episode ->
+                EpisodeCard(
+                    episode = episode,
+                    seasonNumber = selectedSeason.seasonNumber ?: 1,
+                    seriesTitle = seriesTitle,
+                    onPlay = { onPlayEpisode(episode.id) },
+                )
+            }
+        }
+
+        episodes.forEach { episode ->
+            EpisodeRow(
+                episode = episode,
+                spec = DownloadSpec(
+                    contentId = seriesContentId,
+                    episodeId = episode.id,
+                    title = seriesTitle,
+                    subtitle = "S${selectedSeason.seasonNumber ?: 1} E${episode.episodeNumber ?: 0} · ${episode.title ?: "Episode"}",
+                    posterUrl = episode.thumbnailUrl,
+                    type = contentType,
+                    durationSeconds = episode.duration,
+                    seasonNumber = selectedSeason.seasonNumber,
+                    episodeNumber = episode.episodeNumber,
+                ),
+                onPlay = { onPlayEpisode(episode.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EpisodeCard(
+    episode: Episode,
+    seasonNumber: Int,
+    seriesTitle: String,
+    onPlay: () -> Unit,
+) {
+    val thumb = episode.thumbnailUrl?.let { MediaUrl.resolve(posterUrl = it, videoUrl = episode.videoUrl) }
+    Column(
+        Modifier
+            .width(168.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .clickable { onPlay() }
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(92.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (thumb != null) RemoteImage(url = thumb, modifier = Modifier.fillMaxSize())
+            else Icon(Icons.Filled.PlayArrow, null, tint = Color.White.copy(alpha = 0.8f))
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+            ) {
+                Text("E${episode.episodeNumber ?: 0}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Text(
+            episode.title ?: "Episode ${episode.episodeNumber ?: 0}",
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text("S$seasonNumber · $seriesTitle", color = StColors.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -465,4 +617,9 @@ private fun buildEpisodeInfos(detail: ContentDetail?): List<EpisodePlaybackInfo>
         }
     }
     return list
+}
+
+private fun isSeriesType(type: String?): Boolean {
+    val t = type?.uppercase().orEmpty()
+    return t.contains("SERIES") || t.contains("SHOW") || t == "TV" || t.contains("EPISODE")
 }

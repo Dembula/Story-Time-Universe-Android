@@ -23,6 +23,7 @@ import kotlin.coroutines.resume
 
 /**
  * Google Play Billing orchestration — Android analogue of iOS `StoreService` (StoreKit 2).
+ * Requires Play Billing Library 8.0.0+.
  * When products are not yet created in Play Console, [productDetails] stays empty and the
  * paywall falls back to the web package page (PayFast) so signup still works.
  */
@@ -53,6 +54,7 @@ object BillingService : PurchasesUpdatedListener {
             .enablePendingPurchases(
                 PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
             )
+            .enableAutoServiceReconnection()
             .build()
         startConnection()
     }
@@ -68,7 +70,7 @@ object BillingService : PurchasesUpdatedListener {
             }
 
             override fun onBillingServiceDisconnected() {
-                // Will reconnect on next purchase / refresh attempt.
+                // Auto-reconnect is enabled; next API call will reconnect if needed.
             }
         })
     }
@@ -108,11 +110,12 @@ object BillingService : PurchasesUpdatedListener {
         }
         val subParams = QueryProductDetailsParams.newBuilder().setProductList(subList).build()
         val subs = suspendCancellableCoroutine<List<ProductDetails>> { cont ->
-            client.queryProductDetailsAsync(subParams) { billingResult, productDetailsList ->
+            // PBL 8+: callback receives QueryProductDetailsResult (not a bare list).
+            client.queryProductDetailsAsync(subParams) { billingResult, detailsResult ->
                 if (cont.isActive) {
                     cont.resume(
                         if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                            productDetailsList.orEmpty()
+                            detailsResult.productDetailsList
                         } else {
                             emptyList()
                         }
@@ -131,11 +134,11 @@ object BillingService : PurchasesUpdatedListener {
         )
         val ppvParams = QueryProductDetailsParams.newBuilder().setProductList(ppvList).build()
         val ppv = suspendCancellableCoroutine<ProductDetails?> { cont ->
-            client.queryProductDetailsAsync(ppvParams) { billingResult, productDetailsList ->
+            client.queryProductDetailsAsync(ppvParams) { billingResult, detailsResult ->
                 if (cont.isActive) {
                     cont.resume(
                         if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                            productDetailsList.orEmpty().firstOrNull()
+                            detailsResult.productDetailsList.firstOrNull()
                         } else {
                             null
                         }
@@ -150,12 +153,25 @@ object BillingService : PurchasesUpdatedListener {
         if (productId == StoreProducts.PPV_UNLOCK) _ppvProductDetails.value
         else _productDetails.value.firstOrNull { it.productId == productId }
 
+    /** Prefer the matching base plan (monthly / yearly), else first available offer. */
+    fun subscriptionOfferFor(
+        productId: String,
+        details: ProductDetails? = detailsFor(productId),
+    ): ProductDetails.SubscriptionOfferDetails? {
+        val product = details ?: return null
+        val wanted = StoreProducts.basePlanIdFor(productId)
+        val offers = product.subscriptionOfferDetails.orEmpty()
+        return offers.firstOrNull { it.basePlanId == wanted && it.offerId.isNullOrEmpty() }
+            ?: offers.firstOrNull { it.basePlanId == wanted }
+            ?: offers.firstOrNull()
+    }
+
     fun formattedPrice(productId: String): String? {
         val details = detailsFor(productId) ?: return null
         if (productId == StoreProducts.PPV_UNLOCK) {
             return details.oneTimePurchaseOfferDetails?.formattedPrice
         }
-        val offer = details.subscriptionOfferDetails?.firstOrNull() ?: return null
+        val offer = subscriptionOfferFor(productId, details) ?: return null
         return offer.pricingPhases.pricingPhaseList.firstOrNull()?.formattedPrice
     }
 
@@ -183,7 +199,7 @@ object BillingService : PurchasesUpdatedListener {
         val productParamsBuilder = BillingFlowParams.ProductDetailsParams.newBuilder()
             .setProductDetails(details)
         if (productId != StoreProducts.PPV_UNLOCK) {
-            val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
+            val offerToken = subscriptionOfferFor(productId, details)?.offerToken
             if (offerToken.isNullOrEmpty()) {
                 val err = "No offer available for this plan."
                 _lastError.value = err

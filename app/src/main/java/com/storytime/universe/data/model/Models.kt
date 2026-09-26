@@ -3,6 +3,34 @@ package com.storytime.universe.data.model
 import com.storytime.universe.data.AppConfig
 import com.storytime.universe.data.media.MediaUrl
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
+
+internal fun parseFlexibleDate(raw: String?): Long? {
+    if (raw.isNullOrBlank()) return null
+    val trimmed = raw.trim()
+    val patterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd",
+    )
+    for (pattern in patterns) {
+        try {
+            val fmt = SimpleDateFormat(pattern, Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = true
+            }
+            return fmt.parse(trimmed)?.time
+        } catch (_: Exception) {
+            // try next
+        }
+    }
+    return null
+}
 
 @Serializable
 data class SessionUser(
@@ -66,6 +94,12 @@ data class ContentItem(
     val featured: Boolean? = null,
     @Serializable(with = FlexibleStringSerializer::class) val tags: String? = null,
     @Serializable(with = FlexibleIntSerializer::class) val minAge: Int? = null,
+    @JsonNames("created_at")
+    val createdAt: String? = null,
+    @JsonNames("published_at")
+    val publishedAt: String? = null,
+    @JsonNames("is_new", "newlyAdded")
+    val isNew: Boolean? = null,
 ) {
     val displayType: String
         get() = (type ?: "TITLE").replace("_", " ")
@@ -79,6 +113,20 @@ data class ContentItem(
     val backdropCandidates: List<String>
         get() = MediaUrl.candidates(posterUrl, backdropUrl, videoUrl, preferBackdrop = true)
             .ifEmpty { posterCandidates }
+
+    /** Fresh upload / marked-new badge (iOS `showsNewBadge`). */
+    val showsNewBadge: Boolean
+        get() {
+            if (isNew == true) return true
+            tags?.lowercase()?.let { lower ->
+                if (lower.contains("new") || lower.contains("#new") || lower.contains("just added")) {
+                    return true
+                }
+            }
+            val date = parseFlexibleDate(createdAt) ?: parseFlexibleDate(publishedAt) ?: return false
+            val ageMs = System.currentTimeMillis() - date
+            return ageMs in 0..(30L * 24 * 60 * 60 * 1000)
+        }
 }
 
 @Serializable
@@ -256,7 +304,14 @@ data class SubtitleTrack(
     val label: String? = null,
     val vttUrl: String? = null,
     val isDefault: Boolean? = null,
-)
+) {
+    val absoluteVttUrl: String?
+        get() {
+            val src = vttUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            if (src.startsWith("http://") || src.startsWith("https://")) return src
+            return AppConfig.API_BASE_URL.trimEnd('/') + "/" + src.trimStart('/')
+        }
+}
 
 @Serializable
 data class PlaybackBundle(
@@ -310,6 +365,105 @@ data class SearchResult(
         posterUrl = posterUrl,
     )
 }
+
+@Serializable
+data class AISearchPayload(
+    val results: List<SearchResult>? = null,
+    val items: List<SearchResult>? = null,
+    val reasoning: String? = null,
+    val explanation: String? = null,
+    val suggestions: List<String>? = null,
+) {
+    val resolvedResults: List<SearchResult> get() = results ?: items ?: emptyList()
+    val resolvedReasoning: String? get() = reasoning ?: explanation
+}
+
+data class AISearchResult(
+    val results: List<SearchResult>,
+    val reasoning: String?,
+    val suggestions: List<String>,
+    val usedFallback: Boolean,
+)
+
+@Serializable
+data class ViewerSettingsResponse(
+    val account: ViewerAccountDetails? = null,
+    val address: ViewerAddressDetails? = null,
+    val preferences: ViewerPreferenceDetails? = null,
+    val paymentMethods: List<ViewerPaymentMethodDetails>? = null,
+    val profiles: List<ViewerSettingsProfile>? = null,
+    val activeProfileId: String? = null,
+    val subscription: ViewerSettingsSubscription? = null,
+    val warnings: List<String>? = null,
+)
+
+@Serializable
+data class ViewerAccountDetails(
+    val name: String? = null,
+    val email: String? = null,
+    val phoneNumber: String? = null,
+    val onboardingComplete: Boolean? = null,
+)
+
+@Serializable
+data class ViewerAddressDetails(
+    val residentialAddress: String? = null,
+    val city: String? = null,
+    val provinceState: String? = null,
+    val postalCode: String? = null,
+    val country: String? = null,
+) {
+    val formattedLines: List<String>
+        get() {
+            val lines = mutableListOf<String>()
+            residentialAddress?.trim()?.takeIf { it.isNotEmpty() }?.let { lines.add(it) }
+            val cityLine = listOfNotNull(
+                city?.trim()?.takeIf { it.isNotEmpty() },
+                provinceState?.trim()?.takeIf { it.isNotEmpty() },
+                postalCode?.trim()?.takeIf { it.isNotEmpty() },
+            )
+            if (cityLine.isNotEmpty()) lines.add(cityLine.joinToString(", "))
+            country?.trim()?.takeIf { it.isNotEmpty() }?.let { lines.add(it) }
+            return lines
+        }
+}
+
+@Serializable
+data class ViewerPreferenceDetails(
+    val notifyEmail: Boolean? = null,
+    val playbackQuality: String? = null,
+    val parentalControlsEnabled: Boolean? = null,
+    @Serializable(with = FlexibleIntSerializer::class) val maxMaturityAge: Int? = null,
+    @Serializable(with = FlexibleIntSerializer::class) val parentalMaxAge: Int? = null,
+) {
+    val resolvedMaxMaturityAge: Int? get() = maxMaturityAge ?: parentalMaxAge
+}
+
+@Serializable
+data class ViewerPaymentMethodDetails(
+    val id: String,
+    val label: String? = null,
+    val lastFour: String? = null,
+    val isDefault: Boolean? = null,
+)
+
+@Serializable
+data class ViewerSettingsProfile(
+    val id: String,
+    val name: String? = null,
+    @Serializable(with = FlexibleIntSerializer::class) val age: Int? = null,
+    val dateOfBirth: String? = null,
+    val pinEnabled: Boolean? = null,
+)
+
+@Serializable
+data class ViewerSettingsSubscription(
+    val id: String? = null,
+    val plan: String? = null,
+    val viewerModel: String? = null,
+    val status: String? = null,
+    val currentPeriodEnd: String? = null,
+)
 
 @Serializable
 data class ViewerSubscription(

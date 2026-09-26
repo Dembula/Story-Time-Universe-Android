@@ -32,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storytime.universe.R
 import com.storytime.universe.data.AppConfig
+import com.storytime.universe.data.download.DownloadController
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.theme.StColors
 import com.storytime.universe.ui.util.openUrl
@@ -71,6 +73,8 @@ fun SignInScreen(appState: AppState) {
     var showPassword by remember { mutableStateOf(false) }
     var acceptedTerms by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf(appState.bootstrapError) }
+    val downloadEntries by DownloadController.entries.collectAsState()
+    val hasOfflineDownloads = downloadEntries.any { it.isPlayableOffline }
 
     val canSignUp = acceptedTerms && email.trim().isNotEmpty() && password.length >= 8
 
@@ -286,6 +290,23 @@ fun SignInScreen(appState: AppState) {
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                if (hasOfflineDownloads) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Watch downloads offline",
+                        color = StColors.Accent,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .clickable { appState.enterOfflineDownloads() }
+                            .padding(vertical = 14.dp),
                     )
                 }
             }

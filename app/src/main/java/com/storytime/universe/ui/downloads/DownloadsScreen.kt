@@ -25,12 +25,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,6 +43,8 @@ import com.storytime.universe.data.download.DownloadController
 import com.storytime.universe.data.download.DownloadEntry
 import com.storytime.universe.data.download.UiDownloadState
 import com.storytime.universe.data.media.MediaUrl
+import com.storytime.universe.data.parental.ParentalControls
+import com.storytime.universe.ui.components.ParentalPinDialog
 import com.storytime.universe.ui.components.RemoteImage
 import com.storytime.universe.ui.main.NavActions
 import com.storytime.universe.ui.player.PlaybackRequest
@@ -46,11 +52,29 @@ import com.storytime.universe.ui.theme.StColors
 
 @Composable
 fun DownloadsScreen(actions: NavActions) {
+    val context = LocalContext.current
+    val parental = remember { ParentalControls.get(context) }
     val entries by DownloadController.entries.collectAsState()
     val active = entries.filter {
         it.state == UiDownloadState.DOWNLOADING || it.state == UiDownloadState.QUEUED || it.state == UiDownloadState.FAILED || it.state == UiDownloadState.PAUSED
     }.sortedByDescending { it.createdAtMs }
     val completed = entries.filter { it.state == UiDownloadState.COMPLETED }.sortedByDescending { it.createdAtMs }
+    var pendingPlay by remember { mutableStateOf<PlaybackRequest?>(null) }
+
+    fun playEntry(entry: DownloadEntry) {
+        val meta = entry.meta
+        val request = PlaybackRequest(
+            contentId = meta.contentId,
+            title = meta.subtitle ?: meta.title,
+            episodeId = meta.episodeId,
+            offlineUrl = entry.uri,
+        )
+        if (parental.needsPinForPlayer() || parental.needsPinForDownloads()) {
+            pendingPlay = request
+        } else {
+            actions.play(request)
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(StColors.Background)) {
         Text("Downloads", color = StColors.Foreground, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(20.dp))
@@ -73,14 +97,27 @@ fun DownloadsScreen(actions: NavActions) {
             ) {
                 if (active.isNotEmpty()) {
                     item { SectionLabel("In progress") }
-                    items(active) { entry -> DownloadRow(entry, actions) }
+                    items(active) { entry -> DownloadRow(entry, onPlay = { playEntry(it) }) }
                 }
                 if (completed.isNotEmpty()) {
                     item { SectionLabel("Available offline") }
-                    items(completed) { entry -> DownloadRow(entry, actions) }
+                    items(completed) { entry -> DownloadRow(entry, onPlay = { playEntry(it) }) }
                 }
             }
         }
+    }
+
+    pendingPlay?.let {
+        ParentalPinDialog(
+            title = "Play download",
+            message = "Enter your parental PIN to play this download.",
+            onDismiss = { pendingPlay = null },
+            onSuccess = {
+                val req = pendingPlay
+                pendingPlay = null
+                if (req != null) actions.play(req)
+            },
+        )
     }
 }
 
@@ -97,7 +134,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun DownloadRow(entry: DownloadEntry, actions: NavActions) {
+private fun DownloadRow(entry: DownloadEntry, onPlay: (DownloadEntry) -> Unit) {
     val meta = entry.meta
     val playable = entry.state == UiDownloadState.COMPLETED
     val thumb = meta.posterUrl?.let { MediaUrl.resolve(posterUrl = it, videoUrl = null) }
@@ -107,16 +144,7 @@ private fun DownloadRow(entry: DownloadEntry, actions: NavActions) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(Color.White.copy(alpha = 0.05f))
-            .clickable(enabled = playable) {
-                actions.play(
-                    PlaybackRequest(
-                        contentId = meta.contentId,
-                        title = meta.subtitle ?: meta.title,
-                        episodeId = meta.episodeId,
-                        offlineUrl = entry.uri,
-                    )
-                )
-            }
+            .clickable(enabled = playable) { onPlay(entry) }
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

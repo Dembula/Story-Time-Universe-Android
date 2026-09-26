@@ -1,5 +1,7 @@
 package com.storytime.universe.ui.home
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,67 +31,237 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.storytime.universe.data.model.ContentItem
 import com.storytime.universe.data.model.ContinueWatchingItem
 import com.storytime.universe.ui.components.RemoteImage
 import com.storytime.universe.ui.theme.StColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/** Rows that show Apple TV–style rank marks (mirrors iOS `showsRankNumbers`). */
+fun showsRankNumbers(title: String): Boolean {
+    val t = title.lowercase()
+    return t.contains("trending")
+        || t.contains("top 10")
+        || t.contains("top10")
+        || t.startsWith("top ")
+        || t.contains("popular")
+        || t.contains("chart")
+        || t.contains("most watched")
+}
 
 @Composable
-fun PosterCard(item: ContentItem, rank: Int? = null, modifier: Modifier = Modifier) {
+fun PosterCard(
+    item: ContentItem,
+    rank: Int? = null,
+    glowActive: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    if (rank != null) {
+        Box(
+            modifier = modifier.width(if (rank >= 10) 158.dp else 148.dp),
+            contentAlignment = Alignment.BottomStart,
+        ) {
+            RankBadge(
+                rank = rank,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .zIndex(0f),
+            )
+            PosterArtwork(
+                item = item,
+                glowActive = glowActive,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .zIndex(1f),
+            )
+        }
+    } else {
+        PosterArtwork(item = item, glowActive = glowActive, modifier = modifier)
+    }
+}
+
+@Composable
+private fun PosterArtwork(item: ContentItem, glowActive: Boolean = false, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .width(118.dp)
             .height(176.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (glowActive) {
+                    Modifier
+                        .graphicsLayer {
+                            scaleX = 1.02f
+                            scaleY = 1.02f
+                            shadowElevation = 16f
+                        }
+                } else Modifier
+            ),
     ) {
         RemoteImage(urls = item.posterCandidates, modifier = Modifier.fillMaxSize())
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))))
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
         )
-        Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
-            Text(item.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (!item.category.isNullOrEmpty()) {
-                Text(item.category, color = StColors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        if (glowActive) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .border(1.5.dp, StColors.Accent.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            )
         }
-        if (rank != null) {
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
-                rank.toString(),
-                color = Color.White.copy(alpha = 0.92f),
-                fontSize = 52.sp,
+                item.title.uppercase(),
+                color = Color.White,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 2.dp),
+                fontFamily = FontFamily.SansSerif,
+                letterSpacing = 0.3.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (item.showsNewBadge) {
+            Text(
+                "NEW",
+                color = Color.Black,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 0.6.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(7.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(StColors.Accent)
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
             )
         }
     }
 }
 
+/** Apple TV–style rank mark: bold rounded numeral tucked behind the poster. */
 @Composable
-fun ContentRow(title: String, items: List<ContentItem>, onSelect: (ContentItem) -> Unit) {
+private fun RankBadge(rank: Int, modifier: Modifier = Modifier) {
+    val label = rank.toString()
+    val fontSize = if (rank >= 10) 74.sp else 92.sp
+    val badgeWidth = if (rank >= 10) 78.dp else 64.dp
+    Box(
+        modifier = modifier
+            .width(badgeWidth)
+            .height(120.dp),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+        // Soft black depth shadow
+        Text(
+            label,
+            color = Color.Black.copy(alpha = 0.55f),
+            fontSize = fontSize,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.SansSerif,
+            letterSpacing = (-2).sp,
+            maxLines = 1,
+            modifier = Modifier.offset(x = 1.5.dp, y = 2.dp),
+        )
+        // White → brand orange gradient fill
+        Text(
+            label,
+            fontSize = fontSize,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.SansSerif,
+            letterSpacing = (-2).sp,
+            maxLines = 1,
+            style = TextStyle(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color.White,
+                        Color.White.copy(alpha = 0.82f),
+                        StColors.Accent.copy(alpha = 0.95f),
+                    )
+                )
+            ),
+        )
+    }
+}
+
+@Composable
+fun ContentRow(
+    title: String,
+    items: List<ContentItem>,
+    onSelect: (ContentItem) -> Unit,
+    onSeeAll: (() -> Unit)? = null,
+) {
     if (items.isEmpty()) return
-    val isTrending = title.lowercase().contains("trending")
+    val ranked = showsRankNumbers(title)
+    val scope = rememberCoroutineScope()
+    var glowActive by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(title, color = StColors.Foreground, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .clickable(enabled = onSeeAll != null) { onSeeAll?.invoke() },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, color = StColors.Foreground, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            if (onSeeAll != null) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "See all",
+                    tint = StColors.Muted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+        }
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (ranked) 6.dp else 12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+            modifier = Modifier.pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { glowActive = true },
+                    onDragEnd = {
+                        scope.launch {
+                            delay(280)
+                            glowActive = false
+                        }
+                    },
+                    onDragCancel = { glowActive = false },
+                    onHorizontalDrag = { _, _ -> glowActive = true },
+                )
+            },
         ) {
             itemsIndexed(items, key = { _, it -> it.id }) { idx, item ->
                 PosterCard(
                     item = item,
-                    rank = if (isTrending) idx + 1 else null,
+                    rank = if (ranked) idx + 1 else null,
+                    glowActive = glowActive,
                     modifier = Modifier.clickable { onSelect(item) },
                 )
             }
@@ -97,10 +270,16 @@ fun ContentRow(title: String, items: List<ContentItem>, onSelect: (ContentItem) 
 }
 
 @Composable
-fun ContinueWatchingRow(items: List<ContinueWatchingItem>, onSelect: (ContinueWatchingItem) -> Unit) {
+fun ContinueWatchingRow(
+    items: List<ContinueWatchingItem>,
+    onSelect: (ContinueWatchingItem) -> Unit,
+    onSeeAll: (() -> Unit)? = null,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
-            Modifier.padding(horizontal = 20.dp),
+            Modifier
+                .padding(horizontal = 20.dp)
+                .clickable(enabled = onSeeAll != null) { onSeeAll?.invoke() },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -133,7 +312,14 @@ fun ContinueWatchingRow(items: List<ContinueWatchingItem>, onSelect: (ContinueWa
                                 .padding(horizontal = 4.dp, vertical = 4.dp),
                         )
                     }
-                    Text(item.title, color = StColors.Foreground, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        item.title,
+                        color = StColors.Foreground,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

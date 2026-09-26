@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -16,181 +18,299 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.storytime.universe.data.AppConfig
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.storytime.universe.data.billing.PaywallContext
 import com.storytime.universe.data.billing.StoreProducts
+import com.storytime.universe.data.parental.ParentalControls
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.theme.StColors
-import com.storytime.universe.ui.util.openUrl
+
+private enum class AccountSheet {
+    None,
+    AccountInfo,
+    Subscription,
+    PlaybackHelp,
+    Parental,
+    AgeAssurance,
+    DeleteAccount,
+}
 
 @Composable
 fun AccountScreen(appState: AppState) {
     val context = LocalContext.current
+    val parental = remember { ParentalControls.get(context) }
+    var sheet by remember { mutableStateOf(AccountSheet.None) }
+
     val profile = appState.activeProfile
-    val user = appState.session?.user
-    val sub = appState.subscription
-    val planLabel = StoreProducts.displayNameForPlanCode(sub?.plan)
+    val planLabel = StoreProducts.displayNameForPlanCode(appState.subscription?.plan)
+    val status = appState.subscription?.status ?: "—"
 
     Column(
-        Modifier.fillMaxSize().background(StColors.Background).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        Modifier
+            .fillMaxSize()
+            .background(StColors.Background)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Text("Account", color = StColors.Foreground, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 20.dp))
+        Text("Account", color = StColors.Foreground, fontSize = 32.sp, fontWeight = FontWeight.Bold)
 
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+                .clickable { sheet = AccountSheet.AccountInfo }
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Box(
-                Modifier.size(64.dp).clip(CircleShape).background(StColors.profileColor(profile?.id ?: "x")),
+                Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                StColors.profileColor(profile?.id ?: "a"),
+                                StColors.Accent.copy(alpha = 0.7f),
+                            ),
+                        ),
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                Text((profile?.name ?: "?").take(1).uppercase(), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    (profile?.name ?: "?").take(1).uppercase(),
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(profile?.name ?: "Profile", color = StColors.Foreground, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                user?.email?.let { Text(it, color = StColors.Muted, fontSize = 13.sp) }
-                profile?.let { Text(it.ageLabel, color = StColors.AccentGold, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    profile?.name ?: appState.session?.user?.name ?: "Account",
+                    color = StColors.Foreground,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                )
+                Text("Account info, subscription and settings", color = StColors.Muted, fontSize = 12.sp)
             }
+            Text("›", color = StColors.Muted, fontSize = 18.sp)
+        }
+
+        SettingsGroup {
+            SettingsRow(
+                title = "Account info",
+                subtitle = appState.session?.user?.email ?: "Name, email, phone, address and plan",
+                icon = Icons.Filled.Person,
+            ) { sheet = AccountSheet.AccountInfo }
+        }
+
+        SettingsGroup {
+            SettingsRow(
+                title = "Subscription",
+                subtitle = "$planLabel · $status",
+                icon = Icons.Filled.CreditCard,
+            ) { sheet = AccountSheet.Subscription }
+            if (appState.needsPaymentAttention) {
+                SettingsRow(
+                    title = "Reactivate access",
+                    subtitle = "Subscribe again with Google Play",
+                    icon = Icons.Filled.WorkspacePremium,
+                ) { appState.presentPaywall(PaywallContext.Reactivate) }
+            }
+            SettingsRow(
+                title = "Change plan",
+                subtitle = "Packages billed through Google Play",
+                icon = Icons.Filled.WorkspacePremium,
+            ) { appState.presentPaywall(PaywallContext.ChangePlan) }
+            SettingsRow(
+                title = "Downloads",
+                subtitle = "View offline titles",
+                icon = Icons.Filled.Download,
+            ) { /* Tab switch wired from MainScaffold separately */ }
+        }
+
+        SettingsGroup(title = "Privacy & Family") {
+            SettingsRow(
+                title = "Parental Controls",
+                subtitle = if (parental.isEnabled) "On · ${parental.maturityLabel}" else "Off · age assurance via profiles",
+                icon = Icons.Filled.Shield,
+            ) { sheet = AccountSheet.Parental }
+            SettingsRow(
+                title = "Age Assurance",
+                subtitle = "How we verify age · current profile: ${profile?.ageLabel ?: "—"}",
+                icon = Icons.Filled.ChildCare,
+            ) { sheet = AccountSheet.AgeAssurance }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            QuickAction("Switch\nProfile", Icons.Filled.SwapHoriz) { appState.switchProfile() }
+            QuickAction("Account\nInfo", Icons.Filled.Info) { sheet = AccountSheet.AccountInfo }
+            QuickAction("Playback\nHelp", Icons.Filled.PlayCircle) { sheet = AccountSheet.PlaybackHelp }
         }
 
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(StColors.Card)
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .background(Color.White.copy(alpha = 0.06f)),
         ) {
-            Text("Subscription", color = StColors.Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(planLabel, color = StColors.Foreground, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                val status = sub?.status?.uppercase() ?: "NONE"
-                val statusColor = when (status) {
-                    "ACTIVE", "TRIALING", "PAID" -> StColors.Accent
-                    "PAST_DUE", "CANCELED", "CANCELLED", "EXPIRED", "INACTIVE", "NONE" -> Color(0xFFE5484D)
-                    else -> StColors.Muted
-                }
-                Text(
-                    status.replace("_", " "),
-                    color = statusColor,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(statusColor.copy(alpha = 0.15f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { appState.signOut() }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color(0xFFE5484D), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Sign Out", color = Color(0xFFE5484D), fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
-            when {
-                appState.isPayPerViewAccount -> {
-                    Text(
-                        "${StoreProducts.formatZar(StoreProducts.PPV_PRICE_ZAR)} per title · ${StoreProducts.PPV_ACCESS_DAYS}-day unlock · 1 profile",
-                        color = StColors.Muted,
-                        fontSize = 12.sp,
-                    )
-                }
-                else -> when (sub?.plan?.uppercase()) {
-                    "BASE_1", "BASE", "BASIC" -> Text("R29.99 / month · 1 profile", color = StColors.Muted, fontSize = 12.sp)
-                    "STANDARD_3", "STANDARD" -> Text("R89.99 / month · 3 profiles", color = StColors.Muted, fontSize = 12.sp)
-                    "FAMILY_5", "FAMILY", "PREMIUM" -> Text("R119.99 / month · 5 profiles", color = StColors.Muted, fontSize = 12.sp)
-                }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(StColors.Border))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { sheet = AccountSheet.DeleteAccount }
+                    .padding(vertical = 14.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Delete, null, tint = Color(0xFFE5484D).copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Delete Account", color = Color(0xFFE5484D).copy(alpha = 0.85f), fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
-            sub?.currentPeriodEnd?.let { Text("Renews / ends: $it", color = StColors.Muted, fontSize = 12.sp) }
-            sub?.profileLimit?.let { Text("Profiles allowed: $it", color = StColors.Muted, fontSize = 12.sp) }
-            sub?.deviceCount?.let { Text("Devices: $it", color = StColors.Muted, fontSize = 12.sp) }
-
-            if (appState.needsPaymentAttention) {
-                ActionButton("Choose a package", Icons.Filled.CreditCard, accent = true) {
-                    appState.presentPaywall(PaywallContext.Subscribe)
-                }
-            } else if (appState.isPayPerViewAccount) {
-                ActionButton("PPV account · change package", Icons.Filled.CreditCard) {
-                    appState.presentPaywall(PaywallContext.ChangePlan)
-                }
-            } else {
-                ActionButton("Manage subscription", Icons.Filled.CreditCard) {
-                    openUrl(context, AppConfig.ACCOUNT_URL)
-                }
-            }
-            ActionButton("Change plan", Icons.Filled.WorkspacePremium) {
-                appState.presentPaywall(PaywallContext.ChangePlan)
-            }
-            ActionButton("Open account on web", Icons.AutoMirrored.Filled.OpenInNew) {
-                openUrl(context, AppConfig.ACCOUNT_URL)
-            }
-        }
-
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionButton("Switch profile", Icons.Filled.SwapHoriz) { appState.switchProfile() }
-            ActionButton("Privacy Policy", Icons.Filled.PrivacyTip) {
-                openUrl(context, "${AppConfig.WEB_BASE_URL}/legal/privacy")
-            }
-            ActionButton("Terms of Service", Icons.Filled.Description) {
-                openUrl(context, "${AppConfig.WEB_BASE_URL}/legal/terms")
-            }
-            ActionButton("Help & Support", Icons.Filled.HelpOutline) {
-                openUrl(context, "${AppConfig.WEB_BASE_URL}/support")
-            }
-            ActionButton("Sign out", Icons.AutoMirrored.Filled.Logout, destructive = true) { appState.signOut() }
         }
 
         Text(
             "Story Time Universe · v1.0",
             color = StColors.Muted.copy(alpha = 0.6f),
             fontSize = 12.sp,
-            modifier = Modifier.padding(start = 20.dp, bottom = 32.dp),
+            modifier = Modifier.padding(bottom = 24.dp),
         )
+    }
+
+    if (sheet != AccountSheet.None) {
+        Dialog(
+            onDismissRequest = { sheet = AccountSheet.None },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Box(Modifier.fillMaxSize().background(StColors.Background)) {
+                when (sheet) {
+                    AccountSheet.AccountInfo -> AccountInfoScreen(appState) { sheet = AccountSheet.None }
+                    AccountSheet.Subscription -> SubscriptionInfoScreen(appState) { sheet = AccountSheet.None }
+                    AccountSheet.PlaybackHelp -> PlaybackHelpScreen { sheet = AccountSheet.None }
+                    AccountSheet.Parental -> ParentalControlsScreen { sheet = AccountSheet.None }
+                    AccountSheet.AgeAssurance -> AgeAssuranceScreen(appState) { sheet = AccountSheet.None }
+                    AccountSheet.DeleteAccount -> DeleteAccountScreen(appState) { sheet = AccountSheet.None }
+                    AccountSheet.None -> Unit
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun ActionButton(
-    label: String,
+private fun SettingsGroup(title: String? = null, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        title?.let {
+            Text(
+                it,
+                color = StColors.Muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.White.copy(alpha = 0.08f)),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    title: String,
+    subtitle: String?,
     icon: ImageVector,
-    accent: Boolean = false,
-    destructive: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val tint = when {
-        destructive -> Color(0xFFE5484D)
-        accent -> StColors.Accent
-        else -> StColors.Foreground
-    }
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (accent) StColors.Accent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.06f))
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
-        Text(label, color = tint, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Icon(icon, null, tint = StColors.Accent, modifier = Modifier.size(22.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = StColors.Foreground, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, color = StColors.Muted, fontSize = 12.sp, maxLines = 2)
+            }
+        }
+        Text("›", color = StColors.Muted, fontSize = 16.sp)
+    }
+}
+
+@Composable
+private fun RowScope.QuickAction(title: String, icon: ImageVector, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.08f))
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, null, tint = StColors.Accent)
+        Text(
+            title,
+            color = StColors.Accent,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            lineHeight = 14.sp,
+            modifier = Modifier.height(28.dp),
+        )
     }
 }

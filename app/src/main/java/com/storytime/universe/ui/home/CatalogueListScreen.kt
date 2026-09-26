@@ -1,4 +1,4 @@
-package com.storytime.universe.ui.mylist
+package com.storytime.universe.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -6,18 +6,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -34,22 +37,29 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.storytime.universe.data.model.CatalogueListRequest
+import com.storytime.universe.data.model.CatalogueTypes
 import com.storytime.universe.data.model.ContentItem
+import com.storytime.universe.data.model.matchesGenre
 import com.storytime.universe.data.network.ViewerApi
 import com.storytime.universe.data.parental.ParentalControls
 import com.storytime.universe.ui.AppState
-import com.storytime.universe.ui.home.PosterCard
 import com.storytime.universe.ui.main.NavActions
 import com.storytime.universe.ui.theme.StColors
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyListScreen(appState: AppState, actions: NavActions) {
+fun CatalogueListScreen(
+    request: CatalogueListRequest,
+    appState: AppState,
+    actions: NavActions,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val parental = remember { ParentalControls.get(context) }
     val profileAge = appState.activeProfile?.age
-    val scope = rememberCoroutineScope()
 
     var items by remember { mutableStateOf<List<ContentItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -59,27 +69,64 @@ fun MyListScreen(appState: AppState, actions: NavActions) {
     suspend fun load() {
         errorMessage = null
         try {
-            val raw = ViewerApi.fetchWatchlist()
-            items = parental.filter(raw, profileAge)
+            val combined: List<ContentItem> = when {
+                request.continueWatching.isNotEmpty() ->
+                    request.continueWatching.map { it.asContentItem() }
+
+                request.genre != null -> {
+                    val sample = runCatching { ViewerApi.fetchContent(limit = 80) }.getOrDefault(emptyList())
+                    sample.filter { it.matchesGenre(request.genre) }
+                }
+
+                request.typeValues.isNotEmpty() || request.categoryFilter != null -> {
+                    val def = CatalogueTypes.RowDefinition(
+                        id = request.id,
+                        typeValues = request.typeValues,
+                        categoryFilter = request.categoryFilter,
+                        title = request.title,
+                        reserveEmptySlot = false,
+                    )
+                    val fetched = ViewerApi.fetchCatalogRow(def, limit = 60)
+                    if (fetched.isEmpty()) request.seedItems else fetched
+                }
+
+                else -> request.seedItems
+            }
+
+            val seen = HashSet<String>()
+            items = parental.filter(combined, profileAge).filter { seen.add(it.id) }
         } catch (e: Exception) {
             errorMessage = e.localizedMessage
+            if (items.isEmpty()) {
+                items = parental.filter(request.seedItems, profileAge)
+            }
         }
     }
 
-    LaunchedEffect(profileAge) {
+    LaunchedEffect(request.id, request.genre, profileAge) {
         isLoading = true
         load()
         isLoading = false
     }
 
     Column(Modifier.fillMaxSize().background(StColors.Background)) {
-        Text(
-            "My List",
-            color = StColors.Foreground,
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(20.dp),
-        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = StColors.Foreground)
+            }
+            Text(
+                request.title,
+                color = StColors.Foreground,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
         PullToRefreshBox(
             isRefreshing = isRefreshing,
@@ -107,10 +154,13 @@ fun MyListScreen(appState: AppState, actions: NavActions) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Icon(Icons.Filled.BookmarkBorder, null, tint = StColors.Muted, modifier = Modifier.size(48.dp))
-                    Spacer(Modifier.size(12.dp))
-                    Text("Your list is empty", color = StColors.Foreground, fontSize = 18.sp)
-                    Text("Add titles to watch them later.", color = StColors.Muted, fontSize = 14.sp)
+                    Icon(Icons.Filled.Movie, null, tint = StColors.Muted, modifier = Modifier.size(48.dp))
+                    Text("Nothing here yet", color = StColors.Foreground, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        errorMessage ?: "Check back when new titles arrive.",
+                        color = StColors.Muted,
+                        fontSize = 14.sp,
+                    )
                 }
 
                 else -> LazyVerticalGrid(
@@ -121,13 +171,16 @@ fun MyListScreen(appState: AppState, actions: NavActions) {
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(items, key = { it.id }) { item ->
-                        PosterCard(item = item, modifier = Modifier.clickable { actions.openDetail(item) })
+                        PosterCard(
+                            item = item,
+                            modifier = Modifier.clickable { actions.openDetail(item) },
+                        )
                     }
                 }
             }
         }
 
-        errorMessage?.let {
+        errorMessage?.takeIf { items.isNotEmpty() }?.let {
             Text(it, color = Color(0xFFFF5A5A), fontSize = 13.sp, modifier = Modifier.padding(16.dp))
         }
     }

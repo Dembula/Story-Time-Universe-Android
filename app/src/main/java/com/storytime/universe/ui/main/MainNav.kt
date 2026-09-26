@@ -3,6 +3,7 @@ package com.storytime.universe.ui.main
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.navigation.NavController
+import com.storytime.universe.data.model.CatalogueListRequest
 import com.storytime.universe.data.model.ContentItem
 import com.storytime.universe.data.model.PersonRoute
 import com.storytime.universe.ui.player.PlaybackRequest
@@ -11,6 +12,7 @@ import com.storytime.universe.ui.player.PlaybackRequest
 class MainViewModel : ViewModel() {
     val seeds = mutableMapOf<String, ContentItem>()
     val personRoutes = mutableMapOf<String, PersonRoute>()
+    val catalogueRequests = mutableMapOf<String, CatalogueListRequest>()
     var pendingPlayback: PlaybackRequest? = null
 }
 
@@ -31,8 +33,19 @@ class NavActions(val nav: NavController, val vm: MainViewModel) {
         nav.navigate("person/${Uri.encode(route.id)}")
     }
 
+    fun openCatalogue(request: CatalogueListRequest) {
+        vm.catalogueRequests[request.id] = request
+        nav.navigate("catalogue/${Uri.encode(request.id)}")
+    }
+
     fun play(request: PlaybackRequest) {
         vm.pendingPlayback = request
         nav.navigate("player")
+    }
+
+    fun openDownloads() {
+        nav.navigate("downloads") {
+            launchSingleTop = true
+        }
     }
 }

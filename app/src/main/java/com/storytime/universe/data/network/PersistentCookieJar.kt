@@ -88,6 +88,15 @@ class PersistentCookieJar(context: Context) : CookieJar {
     fun viewerProfileId(): String? =
         store.values.firstOrNull { it.name == AppConfig.VIEWER_PROFILE_COOKIE_NAME }?.value
 
+    /** True when a NextAuth session cookie is still stored (even if the network is down). */
+    @Synchronized
+    fun hasSessionCookie(): Boolean =
+        store.values.any { cookie ->
+            AppConfig.sessionCookieHints.any { hint ->
+                cookie.name.equals(hint, ignoreCase = true)
+            }
+        }
+
     private fun keyFor(cookie: Cookie): String =
         "${cookie.name}|${cookie.domain}|${cookie.path}"
 

@@ -13,8 +13,8 @@ android {
         applicationId = "com.storytime.universe"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         vectorDrawables { useSupportLibrary = true }
     }
@@ -87,8 +87,8 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
-    // Google Play Billing — subscription plans (Basic / Standard / Premium)
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    // Google Play Billing — must be ≥ 8.0.0 for Play Console submissions
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

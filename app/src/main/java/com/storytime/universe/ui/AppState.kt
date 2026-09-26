@@ -1,12 +1,16 @@
 package com.storytime.universe.ui
 
+import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.storytime.universe.data.NetworkMonitor
+import com.storytime.universe.data.SessionStore
 import com.storytime.universe.data.billing.BillingService
 import com.storytime.universe.data.billing.PaywallContext
+import com.storytime.universe.data.download.DownloadController
 import com.storytime.universe.data.network.ApiClient
 import com.storytime.universe.data.network.AuthService
 import com.storytime.universe.data.network.ViewerApi
@@ -15,11 +19,13 @@ import com.storytime.universe.data.model.TitleAccessResult
 import com.storytime.universe.data.model.ViewerProfile
 import com.storytime.universe.data.model.ViewerSubscription
 import com.storytime.universe.ui.player.PlaybackRequest
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /** Top-level router + session state, ported from the iOS `AppState`. */
-class AppState : ViewModel() {
+class AppState(application: Application) : AndroidViewModel(application) {
 
     enum class Route { LOADING, SIGN_IN, PROFILES, MAIN }
 
@@ -33,6 +39,10 @@ class AppState : ViewModel() {
     var bootstrapError by mutableStateOf<String?>(null)
         private set
     var isBusy by mutableStateOf(false)
+        private set
+
+    /** True when the catalogue is unavailable and only downloads should be used. */
+    var isOfflineMode by mutableStateOf(false)
         private set
 
     /** Native plan / PPV paywall. */
@@ -52,21 +62,50 @@ class AppState : ViewModel() {
         bootstrap()
     }
 
+    /** Enter Downloads-only mode without waiting on the network. */
+    fun enterOfflineDownloads() {
+        isOfflineMode = true
+        bootstrapError = null
+        val profile = SessionStore.lastProfile(getApplication())
+        if (profile != null) {
+            activeProfile = profile
+            ApiClient.setViewerProfileCookie(profile.id)
+        }
+        route = Route.MAIN
+    }
+
     private fun bootstrap() {
         viewModelScope.launch {
             route = Route.LOADING
             bootstrapError = null
+            isOfflineMode = false
             ApiClient.setViewerProfileCookie(null)
             activeProfile = null
 
-            val minimumSplashMs = 2800L
+            val app = getApplication<Application>()
+            val online = NetworkMonitor.hasTransport(app)
+            val hasDownloads = runCatching { DownloadController.completedEntries().isNotEmpty() }.getOrDefault(false)
+            val minimumSplashMs = if (online) 1600L else 600L
             val start = System.currentTimeMillis()
 
+            if (!online) {
+                waitRemainingSplash(start, minimumSplashMs)
+                if (hasDownloads || SessionStore.hasAuthCookie()) {
+                    enterOfflineDownloads()
+                } else {
+                    bootstrapError = "You're offline. Connect to the internet to sign in, or download titles while online to watch them later."
+                    route = Route.SIGN_IN
+                }
+                return@launch
+            }
+
             try {
-                val s = AuthService.fetchSession()
+                val s = withTimeout(10_000) { AuthService.fetchSession() }
                 session = s
                 if (s?.user != null) {
-                    subscription = runCatching { ViewerApi.fetchSubscription() }.getOrNull()
+                    subscription = runCatching {
+                        withTimeout(8_000) { ViewerApi.fetchSubscription() }
+                    }.getOrNull()
                     runCatching { BillingService.refreshProducts() }
                 }
                 waitRemainingSplash(start, minimumSplashMs)
@@ -78,9 +117,17 @@ class AppState : ViewModel() {
                 }
             } catch (e: Exception) {
                 session = null
-                bootstrapError = e.localizedMessage
                 waitRemainingSplash(start, minimumSplashMs)
-                route = Route.SIGN_IN
+                if (hasDownloads || SessionStore.hasAuthCookie()) {
+                    bootstrapError = when (e) {
+                        is TimeoutCancellationException -> "Connection timed out — opening downloads."
+                        else -> e.localizedMessage ?: "Couldn't reach Story Time — opening downloads."
+                    }
+                    enterOfflineDownloads()
+                } else {
+                    bootstrapError = e.localizedMessage ?: "Couldn't reach Story Time. Check your connection."
+                    route = Route.SIGN_IN
+                }
             }
         }
     }
@@ -93,6 +140,7 @@ class AppState : ViewModel() {
     suspend fun signIn(email: String, password: String) {
         isBusy = true
         try {
+            isOfflineMode = false
             val s = AuthService.signIn(email, password)
             session = s
             ApiClient.setViewerProfileCookie(null)
@@ -110,6 +158,7 @@ class AppState : ViewModel() {
     suspend fun signUp(email: String, password: String, name: String?) {
         isBusy = true
         try {
+            isOfflineMode = false
             val s = AuthService.signUp(email, password, name)
             session = s
             ApiClient.setViewerProfileCookie(null)
@@ -131,6 +180,8 @@ class AppState : ViewModel() {
             subscription = null
             paywallContext = null
             pendingPlaybackAfterUnlock = null
+            isOfflineMode = false
+            SessionStore.clearProfile(getApplication())
             ApiClient.setViewerProfileCookie(null)
             route = Route.SIGN_IN
             isBusy = false
@@ -140,16 +191,20 @@ class AppState : ViewModel() {
     fun selectProfile(profile: ViewerProfile) {
         activeProfile = profile
         ApiClient.setViewerProfileCookie(profile.id)
+        SessionStore.saveProfile(getApplication(), profile)
+        isOfflineMode = false
         route = Route.MAIN
     }
 
     fun switchProfile() {
+        if (isOfflineMode) return
         activeProfile = null
         ApiClient.setViewerProfileCookie(null)
         route = Route.PROFILES
     }
 
     fun presentPaywall(context: PaywallContext = PaywallContext.Subscribe) {
+        if (isOfflineMode) return
         paywallContext = context
     }
 
@@ -158,6 +213,7 @@ class AppState : ViewModel() {
     }
 
     fun presentPpvUnlock(contentId: String, title: String?, resume: PlaybackRequest? = null) {
+        if (isOfflineMode) return
         pendingPlaybackAfterUnlock = resume
         shouldResumePlaybackAfterPaywall = false
         paywallContext = PaywallContext.Ppv(contentId, title)
@@ -181,6 +237,7 @@ class AppState : ViewModel() {
     }
 
     fun refreshSubscription() {
+        if (isOfflineMode) return
         viewModelScope.launch {
             subscription = runCatching { ViewerApi.fetchSubscription() }.getOrNull()
         }
@@ -209,6 +266,7 @@ class AppState : ViewModel() {
      */
     val needsPaymentAttention: Boolean
         get() {
+            if (isOfflineMode) return false
             if (session?.user == null) return false
             if (isPayPerViewAccount && hasActiveServerSubscription) return false
             if (hasActiveServerSubscription) return false

@@ -25,11 +25,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.storytime.universe.data.model.CatalogueListRequest
 import com.storytime.universe.ui.AppState
 import com.storytime.universe.ui.account.AccountScreen
 import com.storytime.universe.ui.detail.ContentDetailScreen
 import com.storytime.universe.ui.detail.PersonDetailScreen
 import com.storytime.universe.ui.downloads.DownloadsScreen
+import com.storytime.universe.ui.home.CatalogueListScreen
 import com.storytime.universe.ui.home.HomeScreen
 import com.storytime.universe.ui.mylist.MyListScreen
 import com.storytime.universe.ui.player.PlayerScreen
@@ -98,15 +100,26 @@ fun MainScaffold(appState: AppState) {
     ) { innerPadding ->
         NavHost(
             navController = nav,
-            startDestination = "home",
+            startDestination = if (appState.isOfflineMode) "downloads" else "home",
             modifier = Modifier.padding(innerPadding),
         ) {
             composable("home") { HomeScreen(appState, actions) }
-            composable("search") { SearchScreen(actions) }
+            composable("search") { SearchScreen(appState, actions) }
             composable("downloads") { DownloadsScreen(actions) }
-            composable("mylist") { MyListScreen(actions) }
+            composable("mylist") { MyListScreen(appState, actions) }
             composable("account") { AccountScreen(appState) }
 
+            composable("catalogue/{id}") { entry ->
+                val id = entry.arguments?.getString("id").orEmpty()
+                val request = vm.catalogueRequests[id]
+                    ?: CatalogueListRequest(id = id, title = "Catalogue")
+                CatalogueListScreen(
+                    request = request,
+                    appState = appState,
+                    actions = actions,
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable("detail/{id}") { entry ->
                 val id = entry.arguments?.getString("id").orEmpty()
                 ContentDetailScreen(

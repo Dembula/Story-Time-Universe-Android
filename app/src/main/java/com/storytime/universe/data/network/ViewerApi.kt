@@ -1,5 +1,7 @@
 package com.storytime.universe.data.network
 
+import com.storytime.universe.data.model.AISearchPayload
+import com.storytime.universe.data.model.AISearchResult
 import com.storytime.universe.data.model.CatalogueTypes
 import com.storytime.universe.data.model.ContentDetail
 import com.storytime.universe.data.model.ContentItem
@@ -14,6 +16,7 @@ import com.storytime.universe.data.model.PpvCheckoutResponse
 import com.storytime.universe.data.model.TitleAccessResult
 import com.storytime.universe.data.model.SubscriptionResponse
 import com.storytime.universe.data.model.ViewerProfile
+import com.storytime.universe.data.model.ViewerSettingsResponse
 import com.storytime.universe.data.model.ViewerSubscription
 import com.storytime.universe.data.model.ActiveProfileResponse
 import com.storytime.universe.data.model.ProfilesResponse
@@ -432,4 +435,85 @@ object ViewerApi {
         if (sawNotFound) throw ApiException.Server(notFoundMessage)
         throw lastError
     }
+
+    suspend fun fetchViewerSettings(): ViewerSettingsResponse? {
+        val result = runCatching { api.request(path = "api/viewer/settings") }.getOrNull() ?: return null
+        if (result.code != 200) return null
+        return runCatching { api.decode<ViewerSettingsResponse>(result) }.getOrNull()
+    }
+
+    suspend fun deleteAccount(password: String): Boolean {
+        val result = api.request(
+            path = "api/account/delete",
+            method = "POST",
+            jsonBody = mapOf("password" to password, "confirmation" to "DELETE"),
+        )
+        if (!result.isSuccess) throw api.parseApiError(result)
+        return true
+    }
+
+    suspend fun aiSearch(query: String, limit: Int = 12): AISearchResult {
+        val q = query.trim()
+        if (q.length < 2) {
+            return AISearchResult(emptyList(), null, emptyList(), usedFallback = false)
+        }
+        val bodies = listOf(
+            mapOf("query" to q, "limit" to limit),
+            mapOf("q" to q, "limit" to limit),
+            mapOf("prompt" to q, "limit" to limit),
+        )
+        val paths = listOf(
+            "api/viewer/ai/search",
+            "api/browse/ai/search",
+            "api/ai/viewer/search",
+        )
+        for (path in paths) {
+            for (body in bodies) {
+                val result = runCatching {
+                    api.request(path = path, method = "POST", jsonBody = body)
+                }.getOrNull() ?: continue
+                if (!result.isSuccess) continue
+                val payload = runCatching { api.decode<AISearchPayload>(result) }.getOrNull() ?: continue
+                val resolved = payload.resolvedResults
+                if (resolved.isNotEmpty() || !payload.resolvedReasoning.isNullOrBlank()) {
+                    return AISearchResult(
+                        results = resolved,
+                        reasoning = payload.resolvedReasoning,
+                        suggestions = payload.suggestions.orEmpty(),
+                        usedFallback = false,
+                    )
+                }
+            }
+        }
+        // Client fallback: multi-term search + catalogue
+        val terms = q.split(Regex("\\s+")).filter { it.length >= 2 }.take(4)
+        val found = linkedMapOf<String, SearchResult>()
+        for (term in terms.ifEmpty { listOf(q) }) {
+            search(term).forEach { found[it.id] = it }
+        }
+        if (found.size < 6) {
+            runCatching { fetchContent(limit = 40) }.getOrDefault(emptyList()).forEach { item ->
+                val hay = listOfNotNull(item.title, item.category, item.tags, item.type)
+                    .joinToString(" ").lowercase()
+                if (terms.any { hay.contains(it.lowercase()) } || hay.contains(q.lowercase())) {
+                    found.putIfAbsent(item.id, item.asSearchResult())
+                }
+            }
+        }
+        return AISearchResult(
+            results = found.values.take(limit),
+            reasoning = "Showing the closest matches from the Story Time catalogue.",
+            suggestions = listOf("South African drama", "New comedies", "Family films"),
+            usedFallback = true,
+        )
+    }
 }
+
+private fun ContentItem.asSearchResult(): SearchResult = SearchResult(
+    id = id,
+    title = title,
+    type = type,
+    category = category,
+    year = year,
+    posterUrl = posterUrl,
+)
